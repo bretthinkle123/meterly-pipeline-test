@@ -1,0 +1,52 @@
+{
+  "permissions": {
+    "allow": [
+      "Agent",
+      "Read",
+      "Grep",
+      "Glob",
+      "Write",
+      "Edit",
+      "Bash($HOME/.claude/hooks/*.sh)",
+      "Bash(~/.claude/hooks/*.sh)",
+      "Bash(git diff:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git symbolic-ref:*)",
+      "Bash(git checkout:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(jq:*)",
+      "Bash(sha256sum:*)",
+      "Bash(curl:*)",
+      "Bash(date:*)",
+      "Bash(semgrep:*)",
+      "Bash(docker info:*)",
+      "Bash(docker run:*)",
+      "Bash(osv-scanner:*)",
+      "Bash(checkov:*)",
+      "Bash(terraform fmt:*)",
+      "Bash(terraform validate:*)",
+      "Bash(terraform plan:*)",
+      "Bash(npm run:*)",
+      "Bash(npm test:*)",
+      "Bash(pytest:*)",
+      "Bash(go test:*)"
+    ],
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/*.tfstate)",
+      "Read(**/*.tfvars)",
+      "Write(**/.pipeline/diff-approved)",
+      "Write(**/.pipeline/plan-approved)",
+      "Write(**/.pipeline/design-approved)",
+      "Write(**/.pipeline/waivers.json)",
+      "Edit(**/.pipeline/diff-approved)",
+      "Edit(**/.pipeline/plan-approved)",
+      "Edit(**/.pipeline/design-approved)",
+      "Edit(**/.pipeline/waivers.json)"
+    ]
+  }
+}
