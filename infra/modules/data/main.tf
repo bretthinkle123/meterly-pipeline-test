@@ -100,6 +100,27 @@ resource "aws_secretsmanager_secret_version" "app_database_url" {
   depends_on = [null_resource.app_role_bootstrap]
 }
 
+# Feature 3 (Usage Dashboard) — the BFF's server-held `dashboard-reader`
+# credential. Terraform provisions the secret *container* only, encrypted
+# with the existing data CMK (so no new KMS grant is needed on the task
+# role); its real value is set out-of-band by `scripts/seed_api_key.py
+# --write-to-secret` and `ignore_changes` stops a later `apply` from ever
+# reverting that operator write back to the placeholder — the plaintext
+# never lands in *.tfstate/*.tfvars (plan §Infrastructure, I-D1).
+resource "aws_secretsmanager_secret" "dashboard_reader" {
+  name       = "meterly/${var.environment}/dashboard-reader-key"
+  kms_key_id = aws_kms_key.data.arn
+}
+
+resource "aws_secretsmanager_secret_version" "dashboard_reader" {
+  secret_id     = aws_secretsmanager_secret.dashboard_reader.id
+  secret_string = "REPLACED_OUT_OF_BAND_BY_scripts/seed_api_key.py"
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
 resource "aws_elasticache_subnet_group" "this" {
   name       = "${var.name_prefix}-redis-subnets"
   subnet_ids = var.private_subnet_ids

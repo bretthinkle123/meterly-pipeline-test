@@ -4,17 +4,14 @@
 A usage-metering API: ingest metered events, aggregate them into per-customer/metric counters,
 and query usage. A high-throughput ingestion primitive (think Stripe Metering / OpenMeter).
 
-## First feature (this build only — keep scope here)
-Two authenticated endpoints + their storage:
-- POST /v1/events {customer_id, metric, quantity, idempotency_key} — record an event, increment the
-  current-window counter; idempotent on idempotency_key (a duplicate key is a no-op, returns the
-  original result).
-- GET /v1/usage?customer_id=&metric=&window= — return aggregated usage for that customer/metric/window.
-Storage: an append-only `events` table and an `usage_rollup` hourly-aggregate table, the latter added
-by a SECOND migration that backfills from `events` (expand/contract).
+## This build (dashboard — keep scope here)
+One read-only web screen: a usage dashboard that renders per-customer/metric usage for a selected
+window, built to the provided Claude Design export under `design/`. It is backed ENTIRELY by the
+existing `GET /v1/usage` endpoint — no new backend endpoints, no schema changes, no new data stores.
+Keep scope to this single screen.
 
 ## Explicitly out of scope for this build (later features)
-Billing/invoice export, multi-tenant orgs & RBAC, a usage dashboard/UI, additional metric types,
+Billing/invoice export, multi-tenant orgs & RBAC, additional metric types,
 webhooks. Do not build these now.
 
 ## Stack
@@ -26,7 +23,7 @@ webhooks. Do not build these now.
 - Observability: CloudWatch + X-Ray + Sentry (release-tagged).
 
 ## Frontend design source
-- Design source: none (API only).
+- Design source: see design/ (Claude Design export).
 
 ## Non-functional / acceptance signals
 - AC-PERF: POST /v1/events p95 < 50 ms measured UNDER 500 req/s sustained (not serial); throughput

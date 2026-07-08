@@ -82,6 +82,16 @@ resource "aws_iam_role_policy" "task" {
         Resource = var.database_kms_key_arn
       },
       {
+        # Feature 3 (Usage Dashboard) — resource-scoped to exactly the
+        # reader-secret ARN, no wildcard. Reuses the existing `DecryptDataKey`
+        # grant above (the secret is encrypted with the same CMK), so this
+        # one statement is the entire IAM delta (plan §Infrastructure, E-D1).
+        Sid      = "ReadDashboardReaderSecret"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = var.dashboard_reader_secret_arn
+      },
+      {
         Sid    = "WriteLogsNoDelete"
         Effect = "Allow"
         Action = [
@@ -119,6 +129,7 @@ resource "aws_ecs_task_definition" "this" {
         { name = "METERLY_ENVIRONMENT", value = var.environment },
         { name = "METERLY_REDIS_URL", value = "redis://${var.redis_primary_endpoint}:6379/0" },
         { name = "METERLY_DATABASE_SECRET_NAME", value = var.database_secret_arn },
+        { name = "METERLY_DASHBOARD_READER_SECRET_NAME", value = var.dashboard_reader_secret_arn },
         { name = "METERLY_ENABLE_DOCS", value = var.environment == "prod" ? "false" : "true" },
       ]
       logConfiguration = {

@@ -10,6 +10,7 @@ Authentication and authorization layer: API key verification (split-token parsin
 |---|---|
 | `__init__.py` | `require_api_key` FastAPI dependency guard: parses the `Authorization: Bearer` header, checks the verification cache, falls back to DB lookup + Argon2id verify on cache miss, sets the authenticated `api_key_id` in request state. |
 | `api_key.py` | Split-token key parsing (`mtr_live_<key_id>_<secret>`), verification logic (Argon2id check), cache TTL management, revocation status check. |
+| `dashboard_reader.py` | `get_dashboard_reader_principal()` — server-held dashboard-reader principal resolution and memoization. Fetches the `dashboard-reader` credential from AWS Secrets Manager via `get_secret`, resolves it to an `AuthenticatedPrincipal` via `verify_api_key`, and caches it in-process with a short TTL to avoid repeated Argon2id costs on the fan-out reads. Used by `dashboard_service` to drive the BFF data path. |
 | `rate_limit.py` | Tier-1 (pre-auth, IP+route keyed) and Tier-2 (post-auth, api_key_id keyed) Redis token-bucket limiters; both fail open (log warning, allow request) on Redis connection error. |
 
 ## Relationships

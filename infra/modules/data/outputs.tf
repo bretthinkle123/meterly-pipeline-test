@@ -17,3 +17,8 @@ output "db_instance_endpoint" {
   description = "RDS instance endpoint (address:port)."
   value       = aws_db_instance.this.endpoint
 }
+
+output "dashboard_reader_secret_arn" {
+  description = "Secrets Manager ARN holding the dashboard BFF's server-held reader credential."
+  value       = aws_secretsmanager_secret.dashboard_reader.arn
+}

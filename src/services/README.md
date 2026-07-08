@@ -10,7 +10,8 @@ Business logic layer: event ingestion (with idempotency and counter atomicity), 
 |---|---|
 | `events_service.py` | `create_event(api_key_id, customer_id, metric, quantity, idempotency_key)` — inserts an event + increments the hourly counter in one transaction; idempotent on `idempotency_key`. Returns the created/replayed event. |
 | `usage_service.py` | `read_usage(api_key_id, customer_id, metric, window)` — reads the aggregated counter for a time bucket; returns zeros if the bucket is empty (never 404). |
-| `time_windows.py` | `window_start_utc(ts: datetime)` — floors a timezone-aware timestamp to the hour (UTC); used by both services. |
+| `dashboard_service.py` | `get_usage_series(principal, params)` — BFF service for the usage dashboard. Resolves the server-held dashboard-reader principal, validates request params (customer/metric allowlist, granularity), computes the 11 window-starts (hour/day), fans out to `get_usage` in-process, computes deltas (absolute, up/down/neutral), decides populated vs. empty state, and returns the dashboard response. Also emits the `dashboard.usage_series` audit log. |
+| `time_windows.py` | `window_start_utc(ts: datetime)` — floors a timezone-aware timestamp to the hour (UTC); used by events and usage services. |
 
 ## Relationships
 

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meterly Usage</title>
+  <!--
+    SCREEN-1 (Meterly Usage), ported 1:1 from the Claude Design export
+    (.pipeline/design-spec.md). External CSS/JS only — the page CSP is
+    `script-src 'self'; style-src 'self'` with no `unsafe-inline`, so this
+    file carries no inline <style>/<script>/event-handler attributes.
+  -->
+  <link rel="stylesheet" href="/dashboard/static/dashboard.css">
+</head>
+<body>
+  <div data-screen-label="Meterly Usage" data-testid="dashboard-screen">
+
+    <!-- CMP-1: app header / top bar -->
+    <header class="app-header" data-testid="app-header">
+      <div class="app-header__brand">
+        <span class="logo-mark" aria-hidden="true">M</span>
+        <span class="wordmark">Meterly</span>
+        <span class="breadcrumb-slash">/</span>
+        <span class="breadcrumb-current">Usage</span>
+      </div>
+      <!-- CMP-2: environment badge — populated by dashboard.js from GET /dashboard/api/config -->
+      <span class="env-badge" data-testid="env-badge" id="env-badge">
+        <span class="env-badge__dot" aria-hidden="true"></span>
+        <span id="env-badge-label"></span>
+      </span>
+    </header>
+
+    <main class="dashboard-main">
+
+      <!-- Filter row: CMP-3 selects + CMP-4 segmented control -->
+      <div class="filter-row">
+        <label class="filter-field">
+          <span class="filter-field__label">Customer</span>
+          <select class="select-field" id="customer-select" data-testid="customer-select"></select>
+        </label>
+
+        <label class="filter-field">
+          <span class="filter-field__label">Metric</span>
+          <select class="select-field" id="metric-select" data-testid="metric-select"></select>
+        </label>
+
+        <div class="filter-field">
+          <span class="filter-field__label">Window</span>
+          <div class="segmented-control" role="group" aria-label="Window" id="window-segmented-control"
+               data-testid="window-segmented-control">
+            <button type="button" class="segment-button segment-button--active" data-granularity="hour">hour</button>
+            <button type="button" class="segment-button" data-granularity="day">day</button>
+            <button type="button" class="segment-button segment-button--disabled" data-granularity="month"
+                    aria-disabled="true"
+                    title="monthly view lands with a daily/monthly rollup">month</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Loading state (new — mirrors the populated layout, no content shift on arrival) -->
+      <div class="state-panel" id="loading-state" data-testid="loading-state" hidden>
+        <div class="skeleton-stat-card">
+          <div class="skeleton-block"></div>
+        </div>
+        <div class="skeleton-table-card" id="skeleton-rows"></div>
+      </div>
+
+      <!-- Populated state: CMP-5 stat card + CMP-7 table -->
+      <div class="state-panel" id="populated-state" data-testid="populated-state" hidden>
+        <section class="stat-card" data-testid="stat-card">
+          <div class="stat-card__label">Current usage</div>
+          <div class="stat-card__row">
+            <span class="stat-number" id="stat-number" data-testid="stat-number"></span>
+            <span class="delta-pill delta-pill--stat" id="stat-delta-pill" data-testid="stat-delta-pill">
+              <span id="stat-delta-text"></span>
+            </span>
+          </div>
+          <div class="stat-card__meta">
+            <span class="mono-chip" id="stat-metric-chip" data-testid="stat-metric-chip"></span>
+            <span class="stat-card__window-noun" id="stat-window-noun"></span>
+          </div>
+        </section>
+
+        <section class="table-card" data-testid="usage-table-card">
+          <div class="table-card__header">
+            <span class="table-card__title">Recent windows</span>
+            <span class="table-card__caption">last 10 &middot; newest first</span>
+          </div>
+          <table class="usage-table" data-testid="usage-table">
+            <thead>
+              <tr>
+                <th scope="col">Window start</th>
+                <th scope="col">Metric</th>
+                <th scope="col" class="is-numeric">Quantity</th>
+                <th scope="col" class="is-numeric">&Delta; vs prior</th>
+              </tr>
+            </thead>
+            <tbody id="usage-table-body"></tbody>
+          </table>
+        </section>
+      </div>
+
+      <!-- Empty state (CMP-9), real trigger: all 11 windows zero -->
+      <div class="state-panel" id="empty-state" data-testid="empty-state" hidden>
+        <section class="info-card">
+          <span class="info-card__glyph" aria-hidden="true">{ }</span>
+          <div class="info-card__title" id="empty-state-title"></div>
+          <div class="info-card__hint">
+            Send your first event to <code class="mono-chip">POST /v1/events</code>
+          </div>
+        </section>
+      </div>
+
+      <!-- Error state (new — reuses the CMP-9 card structure) -->
+      <div class="state-panel" id="error-state" data-testid="error-state" hidden>
+        <section class="info-card">
+          <span class="info-card__glyph info-card__glyph--error" aria-hidden="true">!</span>
+          <div class="info-card__title">Couldn&rsquo;t load usage</div>
+          <div class="info-card__hint">Something went wrong loading this view. Please try again.</div>
+          <button type="button" class="info-card__retry" id="retry-button" data-testid="retry-button">Retry</button>
+        </section>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="/dashboard/static/dashboard.js"></script>
+</body>
+</html>

@@ -52,6 +52,20 @@ class Settings(BaseSettings):
     # Docs/OpenAPI exposure (disabled in prod per ASVS 13.4.5).
     enable_docs: bool = True
 
+    # Dashboard (feature 3) — bootstrap pointer to the server-held BFF reader
+    # credential (name/ARN only, never the secret value; see
+    # src/auth/dashboard_reader.py), plus the config-driven allowlists shared
+    # by CMP-3's dropdowns and the usage-series validation contract so the
+    # two can never drift apart.
+    dashboard_reader_secret_name: str = "meterly/dashboard-reader-key"
+    dashboard_reader_secret_env_fallback: str = "DASHBOARD_READER_API_KEY"
+    dashboard_customers: tuple[str, ...] = ("acme-corp", "globex", "initech")
+    dashboard_metrics: tuple[str, ...] = ("api_calls", "storage_gb", "active_seats")
+    # `month` is deliberately excluded — the hourly rollup cannot serve it
+    # correctly within the 90-day lookback bound (plan §Q1); the segmented
+    # control still renders a disabled month segment for visual fidelity.
+    dashboard_granularities: tuple[str, ...] = ("hour", "day")
+
 
 @lru_cache
 def get_settings() -> Settings:

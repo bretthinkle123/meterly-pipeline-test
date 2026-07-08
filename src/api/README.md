@@ -10,10 +10,12 @@ HTTP API layer: FastAPI route handlers, request/response schemas (Pydantic v2), 
 |---|---|
 | `routes/events.py` | `POST /v1/events` handler; calls `events_service.create_event`. |
 | `routes/usage.py` | `GET /v1/usage` handler; calls `usage_service.read_usage`. |
+| `routes/dashboard.py` | Dashboard BFF routes: `GET /dashboard` (served HTML), `/dashboard/static/*` (CSS/JS), `/dashboard/api/config` (allowlists + environment), `/dashboard/api/usage-series` (BFF data). Calls `dashboard_service.get_usage_series`. |
 | `routes/health.py` | `GET /health` (liveness, no dependencies) and `GET /health/ready` (readiness, DB + migration check). |
 | `schemas/events.py` | Pydantic models for POST /v1/events request and response; `extra='forbid'` contract enforcement. |
 | `schemas/usage.py` | Pydantic models for GET /v1/usage request (query parameters) and response. |
-| `middleware.py` | Request-ID / trace-ID assignment, security headers (HSTS, CSP, X-Frame-Options), CORS. |
+| `schemas/dashboard.py` | Pydantic models for GET /dashboard/api/usage-series query parameters (`UsageSeriesQueryParams`: allowlist + granularity validation) and response models (`UsageSeriesResponse`, `UsageSeriesRow`, `ConfigResponse`); `extra='forbid'` contract enforcement. |
+| `middleware.py` | Request-ID / trace-ID assignment, security headers (HSTS, CSP with route-aware logic for `/dashboard` served-page, X-Frame-Options), CORS, `Cache-Control: no-store` for `/dashboard*` routes. |
 | `errors.py` | Error-envelope boundary: catches all unhandled exceptions and returns `{error:{code,message,requestId}}` with no stack/secret leakage. |
 
 ## Relationships

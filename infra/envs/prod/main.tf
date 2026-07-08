@@ -79,6 +79,7 @@ module "compute" {
   database_secret_arn     = module.data.database_secret_arn
   database_kms_key_arn    = module.data.kms_key_arn
   redis_primary_endpoint  = module.data.redis_primary_endpoint
+  dashboard_reader_secret_arn = module.data.dashboard_reader_secret_arn
 }
 
 module "observability" {

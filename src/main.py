@@ -25,6 +25,7 @@ from src.api.middleware import (
     Tier1EdgeThrottleMiddleware,
     configure_cors,
 )
+from src.api.routes.dashboard import router as dashboard_router
 from src.api.routes.events import router as events_router
 from src.api.routes.health import router as health_router
 from src.api.routes.usage import router as usage_router
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(events_router)
     app.include_router(usage_router)
+    app.include_router(dashboard_router)
 
     # Must run after routes are mounted (FastAPIInstrumentor introspects them)
     # and before the app starts serving (it registers ASGI middleware, which

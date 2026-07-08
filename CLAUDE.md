@@ -18,7 +18,8 @@
 - Deploy: CI on merge — see docs/pipeline-deployment-targets.md (build-provenance → deploy.yml chain)
 
 ## Frontend design source
-- Design source: none (API only)
+- Design source: see design/ (Claude Design export)
+- Target: web
 
 ## Conventions
 - Module layout: src/ package (src/main.py app entry), facade modules per code-standards defaults

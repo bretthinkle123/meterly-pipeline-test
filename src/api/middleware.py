@@ -31,6 +31,29 @@ _SECURITY_HEADERS = {
     "Permissions-Policy": "geolocation=(), camera=(), microphone=()",
 }
 
+# The served dashboard page must load its own same-origin CSS/JS, unlike a
+# JSON route — the global `default-src 'none'` default would block that, so
+# this route-aware CSP is substituted in for exactly the HTML + asset routes
+# (plan §"Edge / security headers"). `script-src`/`style-src 'self'` with no
+# `unsafe-inline`/`unsafe-eval` is the XSS backstop (ASVS 3.4.3) behind the
+# `textContent`-only DOM sink in `dashboard.js`; `frame-ancestors 'none'` is
+# the clickjacking defense (ASVS 3.4.6) alongside the inherited
+# `X-Frame-Options: DENY`.
+_DASHBOARD_PAGE_CSP = (
+    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+    "font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; "
+    "frame-ancestors 'none'; object-src 'none'"
+)
+
+_DASHBOARD_PAGE_PATHS = frozenset(
+    {"/dashboard", "/dashboard/static/dashboard.css", "/dashboard/static/dashboard.js"}
+)
+
+# Every dashboard path (the page, its assets, and the BFF JSON routes) serves
+# usage/customer data that must never be cached by the browser or an
+# intermediary (ASVS 14.3.2) — same posture as `/v1/usage` below.
+_DASHBOARD_NO_STORE_PREFIX = "/dashboard"
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Sets a fixed set of security headers on every response, including error responses."""
@@ -42,7 +65,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         for header_name, header_value in _SECURITY_HEADERS.items():
             response.headers[header_name] = header_value
-        if request.url.path.startswith("/v1/usage"):
+
+        path = request.url.path
+        if path in _DASHBOARD_PAGE_PATHS:
+            response.headers["Content-Security-Policy"] = _DASHBOARD_PAGE_CSP
+
+        if path.startswith("/v1/usage") or path.startswith(_DASHBOARD_NO_STORE_PREFIX):
             # Usage totals are billing-adjacent personal-scoped data — never cache
             # them client-side or in an intermediary (ASVS 14.3.2).
             response.headers["Cache-Control"] = "no-store"

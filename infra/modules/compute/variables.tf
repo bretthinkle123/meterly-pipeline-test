@@ -77,3 +77,8 @@ variable "redis_primary_endpoint" {
   description = "ElastiCache Redis primary endpoint, passed to the app as config (not a secret)."
   type        = string
 }
+
+variable "dashboard_reader_secret_arn" {
+  description = "Secrets Manager ARN the task role may read the dashboard-reader credential from."
+  type        = string
+}

@@ -9,8 +9,8 @@ Infrastructure-as-code (Terraform) for AWS deployment: modular resources (networ
 | Directory / Module | Responsibility |
 |---|---|
 | `modules/network/` | VPC, subnets (public and private, multi-AZ), NAT gateway, security groups. Foundational networking layer. |
-| `modules/compute/` | ECS Fargate cluster, task definitions, auto-scaling, ALB target groups. Runs the Meterly app containers. |
-| `modules/data/` | RDS PostgreSQL (multi-AZ with synchronous standby), ElastiCache Redis (for rate limiting), KMS keys (encryption at rest). Storage layer. |
+| `modules/compute/` | ECS Fargate cluster, task definitions, auto-scaling, ALB target groups. Runs the Meterly app containers. Also includes the dashboard-reader IAM task-role grant (`secretsmanager:GetSecretValue` on the reader secret, resource-scoped). |
+| `modules/data/` | RDS PostgreSQL (multi-AZ with synchronous standby), ElastiCache Redis (for rate limiting), KMS keys (encryption at rest), dashboard-reader secret (AWS Secrets Manager, CMK-encrypted). Storage layer and credential management. |
 | `modules/edge/` | CloudFront distribution (optional; for future CDN caching), WAF rules (if needed). Edge security layer. |
 | `modules/observability/` | CloudWatch log groups, X-Ray sampling rules, SNS topics, SLO alarms (availability, p95 latency, error rate, unhealthy hosts). Monitoring and alerting. |
 | `envs/staging/main.tf` | Staging environment root module: instantiates all modules at staging scale (1-2 ECS tasks, smaller RDS instance). Separate backend and state. |
