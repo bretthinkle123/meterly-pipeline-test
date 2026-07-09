@@ -22,6 +22,7 @@ class ApiKeyRecord:
     secret_hash: str
     rate_limit_per_sec: int
     revoked_at: object | None
+    scope: str
 
 
 async def find_active_key_by_key_id(
@@ -36,7 +37,7 @@ async def find_active_key_by_key_id(
     result = await connection.execute(
         text(
             """
-            SELECT id, key_id, secret_hash, rate_limit_per_sec, revoked_at
+            SELECT id, key_id, secret_hash, rate_limit_per_sec, revoked_at, scope
             FROM api_keys
             WHERE key_id = :key_id AND revoked_at IS NULL
             """
@@ -52,6 +53,7 @@ async def find_active_key_by_key_id(
         secret_hash=row["secret_hash"],
         rate_limit_per_sec=row["rate_limit_per_sec"],
         revoked_at=row["revoked_at"],
+        scope=row["scope"],
     )
 
 
@@ -62,16 +64,21 @@ async def create_api_key(
     secret_hash: str,
     label: str,
     rate_limit_per_sec: int = 100,
+    scope: str = "ingest",
 ) -> int:
     """Insert a new API key row (secret already hashed by the caller) and
     return its internal surrogate id. Used only by `scripts/seed_api_key.py`
     — there is no key-creation HTTP endpoint in this build's scope.
+
+    `scope` defaults to `'ingest'` so every existing caller of this function
+    is unaffected; pass `scope='admin'` to provision a key that may also call
+    `PUT /v1/quotas` (admin is a superset scope, not a separate key family).
     """
     result = await connection.execute(
         text(
             """
-            INSERT INTO api_keys (key_id, secret_hash, label, rate_limit_per_sec)
-            VALUES (:key_id, :secret_hash, :label, :rate_limit_per_sec)
+            INSERT INTO api_keys (key_id, secret_hash, label, rate_limit_per_sec, scope)
+            VALUES (:key_id, :secret_hash, :label, :rate_limit_per_sec, :scope)
             RETURNING id
             """
         ),
@@ -80,6 +87,7 @@ async def create_api_key(
             "secret_hash": secret_hash,
             "label": label,
             "rate_limit_per_sec": rate_limit_per_sec,
+            "scope": scope,
         },
     )
     return result.scalar_one()

@@ -27,6 +27,7 @@ from src.api.middleware import (
 )
 from src.api.routes.events import router as events_router
 from src.api.routes.health import router as health_router
+from src.api.routes.quotas import router as quotas_router
 from src.api.routes.usage import router as usage_router
 from src.config.settings import get_settings
 from src.db.session import dispose_engine
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(events_router)
     app.include_router(usage_router)
+    app.include_router(quotas_router)
 
     # Must run after routes are mounted (FastAPIInstrumentor introspects them)
     # and before the app starts serving (it registers ASGI middleware, which

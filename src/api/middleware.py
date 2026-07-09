@@ -160,6 +160,6 @@ def configure_cors(app: FastAPI, settings: Settings) -> None:
         CORSMiddleware,
         allow_origins=list(settings.cors_allowed_origins),
         allow_credentials=False,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PUT"],
         allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
     )

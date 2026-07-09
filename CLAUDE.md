@@ -7,7 +7,9 @@
 - Data stores: PostgreSQL
 - Migration tool: Alembic
 - Cloud / IaC: AWS + Terraform
-- Auth provider: API keys (Argon2id-hashed at rest), per-key rate limiting — no third-party IdP
+- Auth provider: API keys (Argon2id-hashed at rest), per-key rate limiting — no third-party IdP.
+  `api_keys.scope` (`'ingest'` default, `'admin'` elevated) gates `PUT /v1/quotas`; provision an
+  admin key with `scripts/seed_api_key.py --admin`.
 - Observability: CloudWatch + X-Ray + Sentry (release-tagged)
 - Packaging / runtime: container (Docker) — justified: deploys through the ECS canary path
 

@@ -46,3 +46,45 @@ async def test_seed_api_key_script_persists_only_the_hash(postgres_url, truncate
     assert row["secret_hash"].startswith("$argon2id$")
     assert row["secret_hash"] not in printed_key
     assert row["rate_limit_per_sec"] == 50
+
+
+async def test_admin_flag_sets_scope(postgres_url, truncate_tables):
+    """AC17: `--admin` provisions a key with `scope='admin'`; omitting the
+    flag defaults to `scope='ingest'` (no change to the printed key format)."""
+    import os
+
+    env = dict(os.environ)
+    env["DATABASE_URL"] = postgres_url
+
+    admin_result = subprocess.run(
+        [sys.executable, "scripts/seed_api_key.py", "--label", "admin-key", "--admin"],
+        cwd=str(_REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert admin_result.returncode == 0, f"seed script failed:\n{admin_result.stdout}\n{admin_result.stderr}"
+    admin_printed_key = admin_result.stdout.strip().splitlines()[-1]
+    assert admin_printed_key.startswith("mtr_live_")
+
+    ingest_result = subprocess.run(
+        [sys.executable, "scripts/seed_api_key.py", "--label", "ingest-key"],
+        cwd=str(_REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert ingest_result.returncode == 0, f"seed script failed:\n{ingest_result.stdout}\n{ingest_result.stderr}"
+
+    engine = create_async_engine(postgres_url)
+    async with engine.connect() as connection:
+        admin_row = (
+            await connection.execute(text("SELECT scope FROM api_keys WHERE label = 'admin-key'"))
+        ).mappings().first()
+        ingest_row = (
+            await connection.execute(text("SELECT scope FROM api_keys WHERE label = 'ingest-key'"))
+        ).mappings().first()
+    await engine.dispose()
+
+    assert admin_row["scope"] == "admin"
+    assert ingest_row["scope"] == "ingest"

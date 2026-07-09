@@ -10,11 +10,13 @@ HTTP API layer: FastAPI route handlers, request/response schemas (Pydantic v2), 
 |---|---|
 | `routes/events.py` | `POST /v1/events` handler; calls `events_service.create_event`. |
 | `routes/usage.py` | `GET /v1/usage` handler; calls `usage_service.read_usage`. |
+| `routes/quotas.py` | `PUT /v1/quotas` handler; composes auth -> Tier-2 throttle -> an `admin`-scope gate (403 `forbidden` otherwise) -> `quota_service.upsert_tenant_quota`. |
 | `routes/health.py` | `GET /health` (liveness, no dependencies) and `GET /health/ready` (readiness, DB + migration check). |
 | `schemas/events.py` | Pydantic models for POST /v1/events request and response; `extra='forbid'` contract enforcement. |
 | `schemas/usage.py` | Pydantic models for GET /v1/usage request (query parameters) and response. |
-| `middleware.py` | Request-ID / trace-ID assignment, security headers (HSTS, CSP, X-Frame-Options), CORS. |
-| `errors.py` | Error-envelope boundary: catches all unhandled exceptions and returns `{error:{code,message,requestId}}` with no stack/secret leakage. |
+| `schemas/quotas.py` | Pydantic models for PUT /v1/quotas request (`customer_id`, `metric`, `limit_per_window`, `extra='forbid'`) and response (echo shape). |
+| `middleware.py` | Request-ID / trace-ID assignment, security headers (HSTS, CSP, X-Frame-Options), CORS (allows GET/POST/PUT). |
+| `errors.py` | Error-envelope boundary: catches all unhandled exceptions and returns `{error:{code,message,requestId}}` with no stack/secret leakage. `AppError` lets a raised exception carry an explicit `app_code` (e.g. `quota_exceeded`) that overrides the default status->code map — needed because 429 is shared by two distinct codes (`rate_limited` vs `quota_exceeded`). |
 
 ## Relationships
 
@@ -46,10 +48,13 @@ HTTP API layer: FastAPI route handlers, request/response schemas (Pydantic v2), 
 - All string fields are bounded length (e.g., `customer_id` ≤128, `metric` ≤64).
 - `quantity` is a decimal > 0 (no zero or negative); `idempotency_key` is alphanumeric + underscore/dash.
 - GET `/v1/usage` requires a timezone-aware ISO-8601 `window` parameter within 90 days past to 1 hour future (naive datetimes rejected).
+- PUT `/v1/quotas`: `limit_per_window` is an integer `>= 1` (`<= 1e15`, BIGINT-safe); `customer_id`/`metric` reuse the same anchored allowlists as events; unknown fields (including a client-supplied `api_key_id`/`scope`) are rejected outright.
 
 **Error handling:**
 - Authentication failures (missing/invalid key) → 401/403 before handlers run.
-- Rate-limit exceeded (Tier-1 or Tier-2) → 429 + Retry-After header.
+- `PUT /v1/quotas` from a non-`admin`-scoped key → 403 `forbidden` (function-level authorization, checked in the route's composed dependency).
+- Rate-limit exceeded (Tier-1 or Tier-2) → 429 `rate_limited` + Retry-After header.
+- `POST /v1/events` over its quota → 429 `quota_exceeded` (distinct code, same status) + Retry-After to the next hour boundary; no event/rollup written (transaction rolled back).
 - Schema validation failure → 422 with Pydantic error detail.
 - Database errors (constraint violation, connection drop) → caught by error envelope → 500 (generic message, safe).
 - Any unhandled exception → error envelope → 500, safe, no leak.

@@ -23,11 +23,17 @@ from src.db.session import dispose_engine, get_engine
 from src.repositories.api_keys_repo import create_api_key
 
 
-async def _seed(label: str, rate_limit_per_sec: int) -> None:
+async def _seed(label: str, rate_limit_per_sec: int, *, admin: bool) -> None:
     """Generate a new API key, persist its Argon2id hash, and print the
-    plaintext presented-key value to stdout exactly once."""
+    plaintext presented-key value to stdout exactly once.
+
+    `admin=True` provisions the key with `scope='admin'` — the superset scope
+    required to call `PUT /v1/quotas` (a tenant that wants quotas provisions
+    one admin-scoped key and uses it for both ingest and administration).
+    """
     key_id, secret, presented_key = generate_split_token()
     secret_hash = hash_new_secret(secret)
+    scope = "admin" if admin else "ingest"
 
     async with get_engine().begin() as connection:
         api_key_row_id = await create_api_key(
@@ -36,6 +42,7 @@ async def _seed(label: str, rate_limit_per_sec: int) -> None:
             secret_hash=secret_hash,
             label=label,
             rate_limit_per_sec=rate_limit_per_sec,
+            scope=scope,
         )
 
     await dispose_engine()
@@ -53,8 +60,12 @@ def main() -> None:
         "--rate-limit", type=int, default=100, dest="rate_limit_per_sec",
         help="Tier-2 per-second token-bucket budget for this key (default: 100)",
     )
+    parser.add_argument(
+        "--admin", action="store_true",
+        help="Provision this key with scope='admin' (required to call PUT /v1/quotas); default is scope='ingest'",
+    )
     args = parser.parse_args()
-    asyncio.run(_seed(args.label, args.rate_limit_per_sec))
+    asyncio.run(_seed(args.label, args.rate_limit_per_sec, admin=args.admin))
 
 
 if __name__ == "__main__":

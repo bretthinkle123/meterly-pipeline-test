@@ -27,6 +27,15 @@ Database connectivity and session management: async SQLAlchemy session factory, 
 
 ## Notes
 
+**Isolation level (explicit pin):**
+- `get_engine()` pins `isolation_level="READ COMMITTED"` on the async engine rather than
+  inheriting the DB/role default. `src/repositories/quotas_repo.py`'s
+  `read_tenant_quota_state_locked` locks the `quotas` row (`SELECT ... FOR UPDATE`) then
+  reads `usage_rollup` as a **separate** statement; that second read only sees the prior
+  lock holder's committed increment because each statement gets a fresh snapshot under
+  READ COMMITTED. Under REPEATABLE READ a lock-waiter would read a stale rollup total and
+  admit events past the quota cap. Regression-guarded by `tests/test_db_session_isolation.py`.
+
 **Connection pooling:**
 - The async engine uses a connection pool (default: 5-20 connections).
 - At startup (lifespan in `src/main.py`), the pool is created and warmed.

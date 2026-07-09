@@ -28,8 +28,20 @@ def _asyncpg_url(sync_url: str) -> str:
 
 @pytest.fixture(scope="session")
 def postgres_url():
-    """A session-scoped live Postgres, migrated to head once."""
-    with PostgresContainer("postgres:16-alpine") as postgres:
+    """A session-scoped live Postgres, migrated to head once.
+
+    Raises `max_connections` above Postgres's default of 100: this container
+    is shared across the whole integration-test session, including three k6
+    perf fixtures that each launch a separate multi-worker uvicorn process
+    (its own DB connection pool) against it — the default ceiling is too low
+    for that cumulative demand when the full suite runs in one session and
+    was observed to exhaust mid-suite (`TooManyConnectionsError`) with only
+    the default. This is a test-container capacity knob, not a production
+    change (the real RDS instance sizes `max_connections` independently).
+    """
+    with PostgresContainer("postgres:16-alpine").with_command(
+        "postgres -c max_connections=300"
+    ) as postgres:
         url = _asyncpg_url(postgres.get_connection_url())
         env = dict(os.environ)
         env["DATABASE_URL"] = url
@@ -104,7 +116,9 @@ async def truncate_tables(app_env, postgres_url, redis_url):
     async with engine.begin() as connection:
         from sqlalchemy import text
 
-        await connection.execute(text("TRUNCATE TABLE events, usage_rollup, api_keys RESTART IDENTITY CASCADE"))
+        await connection.execute(
+            text("TRUNCATE TABLE events, usage_rollup, quotas, api_keys RESTART IDENTITY CASCADE")
+        )
     await engine.dispose()
 
     redis_client = redis_async.from_url(redis_url, decode_responses=True)
@@ -134,7 +148,9 @@ async def make_api_key(truncate_tables):
 
     created_ids = []
 
-    async def _make(label: str = "test-key", rate_limit_per_sec: int = 100) -> tuple[str, int]:
+    async def _make(
+        label: str = "test-key", rate_limit_per_sec: int = 100, scope: str = "ingest"
+    ) -> tuple[str, int]:
         key_id, secret, presented_key = generate_split_token()
         secret_hash = hash_new_secret(secret)
         async with get_engine().begin() as connection:
@@ -144,6 +160,7 @@ async def make_api_key(truncate_tables):
                 secret_hash=secret_hash,
                 label=label,
                 rate_limit_per_sec=rate_limit_per_sec,
+                scope=scope,
             )
         created_ids.append(api_key_row_id)
         return presented_key, api_key_row_id

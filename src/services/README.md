@@ -8,25 +8,29 @@ Business logic layer: event ingestion (with idempotency and counter atomicity), 
 
 | File / Module | Responsibility |
 |---|---|
-| `events_service.py` | `create_event(api_key_id, customer_id, metric, quantity, idempotency_key)` — inserts an event + increments the hourly counter in one transaction; idempotent on `idempotency_key`. Returns the created/replayed event. |
+| `events_service.py` | `create_event(principal, payload)` — inserts an event, checks the caller's quota (if any) on the winning-insert branch, and increments the hourly counter, all in one transaction; idempotent on `idempotency_key`. Raises `QuotaExceededError` (429 `quota_exceeded`) when `R + Q > L`, which rolls back the event insert. Returns the created/replayed event. |
 | `usage_service.py` | `read_usage(api_key_id, customer_id, metric, window)` — reads the aggregated counter for a time bucket; returns zeros if the bucket is empty (never 404). |
-| `time_windows.py` | `window_start_utc(ts: datetime)` — floors a timezone-aware timestamp to the hour (UTC); used by both services. |
+| `quota_service.py` | `upsert_tenant_quota(principal, payload)` — create-or-replaces the caller's cap for `(customer_id, metric)` in one transaction; maps the repository's insert-vs-replace signal to 201/200 and logs the `quota.upsert` audit event. |
+| `time_windows.py` | `window_start_utc(ts: datetime)` — floors a timezone-aware timestamp to the hour (UTC); used by all three services. |
 
 ## Relationships
 
 **Public surface:**
-- Imported by `src/api.routes.{events, usage}` to execute the core business operations.
+- Imported by `src/api.routes.{events, usage, quotas}` to execute the core business operations.
 
 **Dependencies:**
-- `events_service` imports `src/repositories.{events_repo, usage_repo}` to insert the event and upsert the counter.
+- `events_service` imports `src/repositories.{events_repo, quotas_repo}` to insert the event, check the quota, and upsert the counter.
 - `usage_service` imports `src/repositories.usage_repo` to read the rollup.
-- Both services receive an authenticated `api_key_id` from the route handler (set by `require_api_key` guard).
+- `quota_service` imports `src/repositories.quotas_repo` to upsert the cap.
+- All three services receive an authenticated `AuthenticatedPrincipal` from the route handler (set by `require_api_key` guard); `principal.scope` gates `PUT /v1/quotas` at the route layer before `quota_service` ever runs.
 - `time_windows` is imported by `events_service` and `usage_service` to floor timestamps.
 
 **Transaction boundary:**
-- `create_event` wraps both the event insert and the rollup upsert in one PostgreSQL transaction (via `src/db/session_context`).
-- This atomicity ensures that if the insert wins (no existing `idempotency_key`), the counter increments exactly once.
-- If the insert loses (duplicate key), neither the counter nor any side effect happens — a no-op.
+- `create_event` wraps the event insert, the quota check, and the rollup upsert in one PostgreSQL transaction (via `src/db/session_context`).
+- This atomicity ensures that if the insert wins (no existing `idempotency_key`) and the quota check passes, the counter increments exactly once.
+- If the insert loses (duplicate key), the quota is never consulted and neither the counter nor any side effect happens — a no-op.
+- If the quota check rejects (`R + Q > L`), raising `QuotaExceededError` propagates out of the transaction context and rolls it back — the event insert is undone and the counter is never touched (no partial write).
+- `upsert_tenant_quota` wraps the quota upsert in its own transaction; a single `INSERT ... ON CONFLICT ... DO UPDATE ... RETURNING (xmax = 0)` reports create-vs-replace with no second round-trip.
 
 ## Notes
 

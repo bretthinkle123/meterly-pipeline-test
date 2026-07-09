@@ -9,8 +9,13 @@ Authentication and authorization layer: API key verification (split-token parsin
 | File / Module | Responsibility |
 |---|---|
 | `__init__.py` | `require_api_key` FastAPI dependency guard: parses the `Authorization: Bearer` header, checks the verification cache, falls back to DB lookup + Argon2id verify on cache miss, sets the authenticated `api_key_id` in request state. |
-| `api_key.py` | Split-token key parsing (`mtr_live_<key_id>_<secret>`), verification logic (Argon2id check), cache TTL management, revocation status check. |
+| `api_key.py` | Split-token key parsing (`mtr_live_<key_id>_<secret>`), verification logic (Argon2id check), cache TTL management, revocation status check. `AuthenticatedPrincipal.scope` (`"ingest"` default, `"admin"` elevated) rides the same cached principal. |
 | `rate_limit.py` | Tier-1 (pre-auth, IP+route keyed) and Tier-2 (post-auth, api_key_id keyed) Redis token-bucket limiters; both fail open (log warning, allow request) on Redis connection error. |
+
+**Authorization scope (function-level, on top of authentication):**
+- `AuthenticatedPrincipal.scope` is `"ingest"` by default; `"admin"` is a superset scope, not a separate key family — an admin-scoped key does everything an ingest key does, plus is permitted to call `PUT /v1/quotas`.
+- Only `src/api/routes/quotas.py`'s composed dependency checks `scope` (`principal.scope == "admin"`, else `HTTPException(403)`); every other route ignores it, so existing behavior is unchanged.
+- Provisioned via `scripts/seed_api_key.py --admin` (defaults to `"ingest"` without the flag); this is also the DAST-context admin test key (DAST-3).
 
 ## Relationships
 

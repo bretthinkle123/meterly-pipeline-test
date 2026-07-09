@@ -31,10 +31,19 @@ class ParsedApiKey:
 
 @dataclass(frozen=True)
 class AuthenticatedPrincipal:
-    """The authenticated caller: the internal `api_key_id` and its rate-limit budget."""
+    """The authenticated caller: the internal `api_key_id`, its rate-limit
+    budget, and its authorization `scope`.
+
+    `scope` defaults to `"ingest"` so any direct construction in existing unit
+    tests keeps working unchanged; `verify_api_key` always populates it
+    explicitly from the stored record. `"admin"` is a superset scope — an
+    admin-scoped key may do everything an ingest key does, plus call
+    `PUT /v1/quotas` (plan §"The tenant model").
+    """
 
     api_key_id: int
     rate_limit_per_sec: int
+    scope: str = "ingest"
 
 
 def parse_split_token(presented_key: str) -> ParsedApiKey | None:
@@ -71,7 +80,7 @@ async def verify_api_key(
         return None
 
     return AuthenticatedPrincipal(
-        api_key_id=record.id, rate_limit_per_sec=record.rate_limit_per_sec
+        api_key_id=record.id, rate_limit_per_sec=record.rate_limit_per_sec, scope=record.scope
     )
 
 

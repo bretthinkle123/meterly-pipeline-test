@@ -30,6 +30,15 @@ def get_engine() -> AsyncEngine:
     if _engine is None:
         _engine = create_async_engine(
             get_database_url(),
+            # Pin READ COMMITTED explicitly rather than inheriting the DB/role
+            # default. quotas_repo.read_tenant_quota_state_locked locks the
+            # quotas row (SELECT ... FOR UPDATE) then reads usage_rollup in a
+            # SEPARATE statement; that read only sees the prior lock holder's
+            # committed increment because each statement gets a fresh snapshot
+            # under READ COMMITTED. Under REPEATABLE READ a lock-waiter would
+            # read a stale rollup total and admit events past the quota cap
+            # (see the read_tenant_quota_state_locked docstring).
+            isolation_level="READ COMMITTED",
             pool_pre_ping=True,
             pool_size=10,
             max_overflow=5,

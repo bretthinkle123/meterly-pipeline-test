@@ -39,6 +39,21 @@ def _envelope(code: str, message: str, request_id: str) -> dict:
     return {"error": {"code": code, "message": message, "requestId": request_id}}
 
 
+class AppError(HTTPException):
+    """An `HTTPException` carrying an explicit `app_code`, for the cases where
+    `_STATUS_TO_CODE`'s status->code map can't express the distinction —
+    `429` already maps to `rate_limited` (the Tier-2 throttle), but a quota
+    rejection needs its own, distinct `quota_exceeded` code on the same
+    status. `handle_http_exception` prefers `app_code` over the status map
+    when present, so this is the minimal single-boundary extension rather
+    than reshaping the map itself.
+    """
+
+    def __init__(self, status_code: int, *, app_code: str, detail: str, headers: dict | None = None) -> None:
+        super().__init__(status_code=status_code, detail=detail, headers=headers)
+        self.app_code = app_code
+
+
 def register_error_handlers(app: FastAPI) -> None:
     """Register the centralized exception handlers on `app`.
 
@@ -63,9 +78,14 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(StarletteHTTPException)
     async def handle_http_exception(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-        """Map a raised `HTTPException` (auth, rate-limit, not-found, ...) to the envelope."""
+        """Map a raised `HTTPException` (auth, rate-limit, not-found, ...) to the envelope.
+
+        Prefers an explicit `app_code` (set by `AppError`) over the status->code
+        map — this is what lets two different exceptions share one HTTP status
+        (`429 rate_limited` vs. `429 quota_exceeded`) with distinct client-facing codes.
+        """
         request_id = _request_id(request)
-        code = _STATUS_TO_CODE.get(exc.status_code, "error")
+        code = getattr(exc, "app_code", None) or _STATUS_TO_CODE.get(exc.status_code, "error")
         message = exc.detail if isinstance(exc.detail, str) else "request failed"
         return JSONResponse(
             status_code=exc.status_code,
@@ -97,4 +117,4 @@ def register_error_handlers(app: FastAPI) -> None:
         )
 
 
-__all__ = ["register_error_handlers", "HTTPException"]
+__all__ = ["register_error_handlers", "HTTPException", "AppError"]
