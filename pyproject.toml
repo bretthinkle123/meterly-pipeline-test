@@ -1,0 +1,48 @@
+[tool.poetry]
+name = "meterly"
+version = "0.1.0"
+description = "Usage-metering ingestion API: idempotent event ingest + aggregated usage query."
+authors = ["Meterly Engineering"]
+readme = "README.md"
+package-mode = true
+packages = [{ include = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "0.133.0"
+starlette = "1.3.1"
+uvicorn = { version = "0.34.0", extras = ["standard"] }
+gunicorn = "23.0.0"
+pydantic = "2.10.4"
+pydantic-settings = "2.7.1"
+sqlalchemy = "2.0.36"
+asyncpg = "0.30.0"
+alembic = "1.14.0"
+argon2-cffi = "23.1.0"
+redis = "5.2.1"
+structlog = "24.4.0"
+sentry-sdk = "2.19.2"
+opentelemetry-sdk = "1.29.0"
+opentelemetry-instrumentation-fastapi = "0.50b0"
+opentelemetry-exporter-otlp = "1.29.0"
+boto3 = "1.35.90"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "8.3.4"
+pytest-asyncio = "0.25.0"
+pytest-cov = "6.0.0"
+httpx = "0.28.1"
+testcontainers = { version = "4.9.0", extras = ["postgres"] }
+hypothesis = "6.123.2"
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+branch = true
+source = ["src"]
