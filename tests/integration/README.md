@@ -27,6 +27,8 @@ suite in `tests/` (no live DB/Redis there).
 | `test_rate_limit.py` | Tier-2 (`api_key_id`-keyed) rate limiting: two principals on one IP get independent buckets; one principal across two IPs shares one bucket. |
 | `test_seed_api_key_script.py` | `scripts/seed_api_key.py` provisions a key against a real database, including the `--admin` flag setting `scope='admin'` (default `scope='ingest'`). |
 | `test_usage_endpoint.py` | `GET /v1/usage` integration tests (aggregation, tenant isolation). |
+| `test_usage_export_endpoint.py` | `GET /v1/usage/export` integration tests: header-only-CSV on an empty result, per-filter narrowing, deterministic ordering, two-tenant isolation, row-cap 422 with no partial body, formula-injection escape end-to-end, response headers (content-type/filename/nosniff/no-store), streaming-not-buffered (multi-chunk) sanity, OpenAPI-schema exposure (AC19), the seeded DAST key calling the export via `test_export_seeded_dast_key_can_call_the_export` (AC20), and the fail-closed pre-flight 500 on a forced `COUNT` error (AC22). |
+| `test_usage_export_perf.py` | Real-Postgres-testcontainer p95 timing sanity check for the export at the 100,000-row cap (AC16) — a 10-sample stable measurement asserting the human-confirmed `p95 <= 3,000ms` bound (not a k6 load test). |
 | `k6/` | k6 load-test scripts driven by `test_perf_k6_load.py` — see `k6/README.md`. |
 
 ## Relationships

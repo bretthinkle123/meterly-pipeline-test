@@ -9,20 +9,22 @@ Business logic layer: event ingestion (with idempotency and counter atomicity), 
 | File / Module | Responsibility |
 |---|---|
 | `events_service.py` | `create_event(principal, payload)` — inserts an event, checks the caller's quota (if any) on the winning-insert branch, and increments the hourly counter, all in one transaction; idempotent on `idempotency_key`. Raises `QuotaExceededError` (429 `quota_exceeded`) when `R + Q > L`, which rolls back the event insert. Returns the created/replayed event. |
-| `usage_service.py` | `read_usage(api_key_id, customer_id, metric, window)` — reads the aggregated counter for a time bucket; returns zeros if the bucket is empty (never 404). |
+| `usage_service.py` | `get_usage(principal, query)` — reads the aggregated counter for the `(customer_id, metric, window)` bucket in `query` (a `UsageQueryParams`); returns zeros if the bucket is empty (never 404). |
+| `usage_export_service.py` | `prepare_export(principal, params)` — the pre-flight row-cap check: a `COUNT(*)` in its own transaction, raising a plain 422 `HTTPException` over `MAX_EXPORT_ROWS` (100,000) *before* any response byte; any other (non-cap) error propagates uncaught to the error-envelope boundary (fail-closed 500, no stream ever started). `stream_export_csv(principal, params)` — the `StreamingResponse` body generator: opens its own tenant-scoped transaction (Starlette pulls it only after the route returns), yields the header row first always (so an empty result is a 200 header-only CSV, never 404), then one CSV-encoded row per streamed rollup at constant memory (a reused `io.StringIO`, drained and reset per row), and logs one `usage.export` audit event in a `finally` block (fires even on a client disconnect or a mid-stream error). |
 | `quota_service.py` | `upsert_tenant_quota(principal, payload)` — create-or-replaces the caller's cap for `(customer_id, metric)` in one transaction; maps the repository's insert-vs-replace signal to 201/200 and logs the `quota.upsert` audit event. |
-| `time_windows.py` | `window_start_utc(ts: datetime)` — floors a timezone-aware timestamp to the hour (UTC); used by all three services. |
+| `time_windows.py` | `floor_to_hour_utc(timestamp: datetime)` — floors a timezone-aware timestamp to the hour (UTC); used by `events_service` and `usage_service`. |
 
 ## Relationships
 
 **Public surface:**
-- Imported by `src/api.routes.{events, usage, quotas}` to execute the core business operations.
+- Imported by `src/api.routes.{events, usage, usage_export, quotas}` to execute the core business operations.
 
 **Dependencies:**
 - `events_service` imports `src/repositories.{events_repo, quotas_repo}` to insert the event, check the quota, and upsert the counter.
 - `usage_service` imports `src/repositories.usage_repo` to read the rollup.
+- `usage_export_service` imports `src/repositories.usage_repo` (`count_usage_rollups`, `stream_usage_rollups`) and `src/api/csv_export.py` (the column contract + formula-escape facade) — it owns the `csv.writer`/`io.StringIO` streaming mechanics, `csv_export.py` owns only the encoding/escaping contract.
 - `quota_service` imports `src/repositories.quotas_repo` to upsert the cap.
-- All three services receive an authenticated `AuthenticatedPrincipal` from the route handler (set by `require_api_key` guard); `principal.scope` gates `PUT /v1/quotas` at the route layer before `quota_service` ever runs.
+- All services receive an authenticated `AuthenticatedPrincipal` from the route handler (set by `require_api_key` guard); `principal.scope` gates `PUT /v1/quotas` at the route layer before `quota_service` ever runs (the export has no scope gate — any authenticated key may export its own tenant's data).
 - `time_windows` is imported by `events_service` and `usage_service` to floor timestamps.
 
 **Transaction boundary:**
