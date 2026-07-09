@@ -63,10 +63,11 @@ jobs:
       - name: Build
         run: poetry run python -c "import src.main"
       - name: Test with coverage (floor = the local gate's figure)
-        run: poetry run pytest --cov=src --cov-branch
-        # Fail under <COVERAGE_FLOOR>% combined lines — the same figure the local deploy
-        # gate rides. Branch coverage: surface in the job summary, do NOT gate (mirrors
-        # the local posture; see test-conventions).
+        run: poetry run pytest --cov=src --cov-branch --cov-fail-under=85
+        # Fail under 85% combined lines — CLAUDE.md's done-bar figure ("tests pass at
+        # >= 85% coverage"), the same figure the local deploy gate rides. Branch
+        # coverage: surface in the job summary, do NOT gate (mirrors the local
+        # posture; see test-conventions).
 
   # mutation — U-22: run mutation testing HERE, on the Linux runner, not on the author's
   # host. mutmut needs a POSIX environment (WSL on Windows), so the local pipeline honestly
