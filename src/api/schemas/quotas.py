@@ -45,3 +45,19 @@ class QuotaResponse(BaseModel):
     customer_id: str
     metric: str
     limit_per_window: int
+
+
+class QuotaDeleteParams(BaseModel):
+    """The two required query parameters of `DELETE /v1/quotas`, reusing the
+    exact same anchored `CustomerId`/`Metric` allowlists `QuotaPutRequest`
+    validates against — same identifiers, same sinks, same rejection
+    behavior (422). `extra='forbid'` rejects any unknown query param
+    (including a client-supplied `api_key_id`), the mass-assignment defense
+    that keeps the delete target's tenant resolved only from the
+    authenticated principal (ASVS 15.3.3).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    customer_id: CustomerId
+    metric: Metric

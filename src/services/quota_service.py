@@ -1,18 +1,22 @@
-"""Service for `PUT /v1/quotas` — the admin-scoped upsert + 201/200 mapping.
+"""Service for `/v1/quotas` — the admin-scoped upsert (`PUT`), list (`GET`),
+and remove (`DELETE`) operations.
 
-Orchestrates one transaction per request: the `xmax` upsert in
-`src/repositories/quotas_repo.py` reports create-vs-replace in a single
-round-trip, so this layer only maps that to the HTTP status and emits the
-audit-trail log (`quota.upsert`, plan §"Repudiation").
+Each entry point orchestrates one transaction per request: the `xmax` upsert
+in `src/repositories/quotas_repo.py` reports create-vs-replace in a single
+round-trip for `PUT`; `GET` opens a read-only scoped transaction for the
+ordered listing; `DELETE` maps "no row matched" to a 404 rather than a
+silent success (plan §"DELETE — remove one cap, explicitly").
 """
 
 from dataclasses import dataclass
 
-from src.api.schemas.quotas import QuotaPutRequest, QuotaResponse
+from fastapi import HTTPException, status
+
+from src.api.schemas.quotas import QuotaDeleteParams, QuotaPutRequest, QuotaResponse
 from src.auth.api_key import AuthenticatedPrincipal
 from src.db.session import scoped_transaction
 from src.logging import get_logger
-from src.repositories.quotas_repo import upsert_quota
+from src.repositories.quotas_repo import delete_quota, list_quotas, upsert_quota
 
 logger = get_logger(service="meterly")
 
@@ -68,4 +72,51 @@ def to_response(outcome: QuotaUpsertOutcome) -> QuotaResponse:
         customer_id=outcome.customer_id,
         metric=outcome.metric,
         limit_per_window=outcome.limit_per_window,
+    )
+
+
+async def list_tenant_quotas(principal: AuthenticatedPrincipal) -> list[QuotaResponse]:
+    """Return the caller's own tenant's full, deterministically ordered quota
+    list — an empty tenant gets an empty list, never a 404 (plan §"Empty set
+    -> 200 [], never 404"). Deliberately not logged as a business event (open
+    question 1, resolved default): a plain read of the caller's own
+    configuration, mirroring `GET /v1/usage`.
+    """
+    async with scoped_transaction(principal.api_key_id) as session:
+        rows = await list_quotas(session, api_key_id=principal.api_key_id)
+
+    return [
+        QuotaResponse(customer_id=row.customer_id, metric=row.metric, limit_per_window=row.limit_per_window)
+        for row in rows
+    ]
+
+
+async def delete_tenant_quota(
+    principal: AuthenticatedPrincipal, params: QuotaDeleteParams
+) -> None:
+    """Remove the cap for `(customer_id, metric)` under the caller's own
+    tenant, raising 404 if no such quota exists (explicit, not silently
+    idempotent — plan §"Why 404-on-absent, not idempotent-204").
+
+    A cross-tenant delete attempt matches zero rows (the `api_key_id` filter
+    + FORCE RLS backstop), which is indistinguishable from a truly-absent
+    quota — the intended BOLA-safe behavior (threat E2).
+    """
+    async with scoped_transaction(principal.api_key_id) as session:
+        removed = await delete_quota(
+            session,
+            api_key_id=principal.api_key_id,
+            customer_id=params.customer_id,
+            metric=params.metric,
+        )
+
+    if not removed:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="quota not found")
+
+    logger.info(
+        "quota.delete",
+        userId=principal.api_key_id,
+        action="delete",
+        customer_id=params.customer_id,
+        metric=params.metric,
     )

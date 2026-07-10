@@ -4,9 +4,10 @@
 
 Meterly ingests metered usage events, serves aggregated per-customer/metric
 counters (single-bucket read or a streamed CSV export), and enforces
-admin-set per-customer, per-metric usage caps ("quotas"). Four authenticated
-HTTP endpoints, one PostgreSQL database, one Redis rate-limit store, running
-as a Docker container on ECS Fargate behind an ALB.
+admin-set per-customer, per-metric usage caps ("quotas"), which an admin key
+can also list and remove. Six authenticated HTTP endpoints, one PostgreSQL
+database, one Redis rate-limit store, running as a Docker container on ECS
+Fargate behind an ALB.
 
 ```
 Client --HTTPS+API key--> ALB --> FastAPI (ECS Fargate, >=2 tasks)
@@ -26,6 +27,8 @@ flowchart LR
     FastAPI -->|"GET /v1/usage: read rollup"| EventsDB
     FastAPI -->|"GET /v1/usage/export: pre-flight COUNT + streamed SELECT"| EventsDB
     FastAPI -->|"PUT /v1/quotas: upsert cap"| EventsDB
+    FastAPI -->|"GET /v1/quotas: list caller's caps"| EventsDB
+    FastAPI -->|"DELETE /v1/quotas: remove one cap"| EventsDB
     FastAPI -->|"DB credential fetch"| Secrets[Secrets Manager]
     FastAPI -->|"traces/logs/errors"| Observability["CloudWatch / X-Ray / Sentry"]
 ```
@@ -136,14 +139,62 @@ round-trip (201 create / 200 replace), with a `quota.upsert` audit log
 (`src/api/routes/quotas.py`, `src/services/quota_service.py`,
 `src/repositories/quotas_repo.py`).
 
+## Request flow — `GET /v1/quotas` and `DELETE /v1/quotas`
+
+Both reuse the same `_require_admin_and_throttled` dependency chain as `PUT`
+(auth -> Tier-2 per-`api_key_id` throttle -> `admin`-scope assertion, 403
+`forbidden` for a non-admin key) — no new auth path or scope
+(`src/api/routes/quotas.py`).
+
+- **`GET /v1/quotas`** (`list_quotas_endpoint` -> `quota_service.list_tenant_quotas`
+  -> `quotas_repo.list_quotas`) takes no request parameter and returns the
+  caller's **full, unpaginated** quota list as `list[QuotaResponse]`
+  (`{customer_id, metric, limit_per_window}` only), via an `api_key_id`-scoped
+  `SELECT ... ORDER BY customer_id, metric` (index-friendly on the table's PK
+  prefix, so the sort is effectively free). An empty tenant gets `200 []`,
+  never 404. Deliberately not given a dedicated business-audit log (a plain
+  read of the caller's own config, mirroring `GET /v1/usage`).
+- **`DELETE /v1/quotas?customer_id=X&metric=Y`** (`delete_quota_endpoint` ->
+  `quota_service.delete_tenant_quota` -> `quotas_repo.delete_quota`) validates
+  the two query params through `QuotaDeleteParams` (the same anchored
+  `CustomerId`/`Metric` allowlists `PUT` uses, `extra='forbid'`), then issues a
+  single parameterized `DELETE ... WHERE api_key_id = :api_key_id AND
+  customer_id = :customer_id AND metric = :metric RETURNING customer_id`. A
+  matched row -> **204 No Content**; no matched row -> **404** `not_found`
+  (explicit, not silently idempotent) — a cross-tenant delete attempt is
+  indistinguishable from this outcome, since the `api_key_id` filter plus the
+  `quotas_tenant_isolation` **FORCE** RLS backstop (migration `0003`) mean the
+  query can never see another tenant's row to remove it. On success, logs one
+  `quota.delete` INFO event (`userId`, `action="delete"`, `customer_id`
+  [facade-redacted], `metric`, `requestId`) — the audit trail for who removed
+  which cap.
+- **No `usage_rollup` side effect:** `delete_quota` issues **only** a `DELETE`
+  on `quotas`; it never touches `usage_rollup`. A DELETE racing an in-flight
+  `POST /v1/events` for the same `(customer, metric)` serializes on the shared
+  quota-row lock (the DELETE's implicit row lock vs. the ingest's `SELECT ...
+  FOR UPDATE OF q`) — whichever commits first determines the outcome for
+  everything that reads after; no additional synchronization is added (the
+  same replacement-race semantics `PUT` already has).
+- **Safe-error / fail-closed:** an unexpected exception on either path (e.g. a
+  DB driver/connection error) propagates to the existing
+  `handle_unexpected_error` catch-all (`src/api/errors.py`) -> generic `{code:
+  internal}` 500 (no stack/SQL/type/path leak). Because both service functions
+  run inside `scoped_transaction`, the exception also rolls the transaction
+  back — `DELETE` leaves the target row intact (no partial delete); `GET` is
+  read-only, so there is nothing to unwind. Same boundary and guarantee as
+  `POST /v1/events`'s precedent.
+- **CORS:** `DELETE` was added to `configure_cors`'s `allow_methods`
+  (`src/api/middleware.py`) for completeness — the origin allowlist is empty
+  in this server-to-server API, so the change is not a live control.
+
 ## Data model
 
 - `api_keys` — the tenant/credential table (migration 0001), extended with a
   `scope` column (migration 0003: `'ingest'` default, `'admin'` elevated).
   `secret_hash` is Argon2id; `key_id` is the public split-token lookup
   handle. `scope='admin'` is a superset scope — an admin key does everything
-  an ingest key does, plus call `PUT /v1/quotas`; a tenant that wants quotas
-  provisions one admin-scoped key and uses it for both.
+  an ingest key does, plus call `PUT`/`GET`/`DELETE /v1/quotas`; a tenant that
+  wants quotas provisions one admin-scoped key and uses it for all three.
 - `events` — append-only ingest log (migration 0001). `UNIQUE (api_key_id,
   idempotency_key)` is the idempotency guarantee; RLS policy
   `events_tenant_isolation` is the application-scoping backstop.
@@ -198,7 +249,8 @@ on every request while the durable store stays Argon2id-only. See
 `src/auth/__init__.py` for the full tradeoff writeup and
 `scripts/seed_api_key.py` for the only key-provisioning path (no HTTP
 endpoint in this build's scope; pass `--admin` to provision a `scope='admin'`
-key for `PUT /v1/quotas`, including the DAST-context admin test key, DAST-3).
+key for `PUT`/`GET`/`DELETE /v1/quotas`, including the DAST-context admin test
+key, DAST-3).
 
 ## Rate limiting
 

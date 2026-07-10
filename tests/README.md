@@ -22,7 +22,7 @@ unit tests here, endpoint/migration/concurrency/perf tests under `integration/`.
 | `test_logging_redaction.py` | A raw `customer_id` (or other sensitive field) must never reach the rendered log line regardless of call site. |
 | `test_rate_limit_fail_open.py` | Regression test for the Tier-2 rate-limit logging facade in `src/auth/rate_limit.py`. |
 | `test_schemas_events.py` | Validation-contract tests for `EventCreateRequest`. |
-| `test_schemas_quotas.py` | Validation-contract tests for `QuotaPutRequest` (anchored `customer_id`/`metric` allowlists, `limit_per_window` bounds, injection rejection). |
+| `test_schemas_quotas.py` | Validation-contract tests for `QuotaPutRequest` (anchored `customer_id`/`metric` allowlists, `limit_per_window` bounds, injection rejection) and `QuotaDeleteParams` (accept/missing/mass-assignment/injection-oversized/invalid-metric cases, plus a Hypothesis property test that acceptance implies the anchored regex). |
 | `test_schemas_usage.py` | Validation-contract tests for `UsageQueryParams`. |
 | `test_schemas_usage_export.py` | Validation-contract tests for `UsageExportQueryParams`: all-filters-optional, the `from`/`from_` alias binding, naive-datetime rejection, `from<=to` and `[now-90d, now+1h]` bound enforcement, `extra="forbid"` rejecting unknown/injected fields. |
 | `test_slo_alarms_defined.py` | Static assertion that the declared SLO burn-rate + canary CloudWatch alarms exist in the Terraform source with the exact names `deploy.yml` expects. |

@@ -130,6 +130,73 @@ async def test_rls_blocks_cross_tenant_read_when_app_filter_is_absent(
         await role_engine.dispose()
 
 
+async def test_rls_blocks_cross_tenant_delete_when_app_filter_is_absent(
+    postgres_url, nobypassrls_role, make_api_key
+):
+    """AC8/AC15 backstop proof for the quota-admin feature's new `DELETE
+    /v1/quotas` surface: with the explicit `api_key_id` filter entirely
+    removed from the query (simulating the primary control being
+    missing/buggy in `quotas_repo.delete_quota`), the RLS policy alone must
+    still confine a `NOBYPASSRLS` session's DELETE to only its own tenant's
+    row -- tenant B's row must survive an unfiltered DELETE issued under
+    tenant A's session setting.
+    """
+    _, tenant_a_id = await make_api_key(label="rls-delete-tenant-a", scope="admin")
+    _, tenant_b_id = await make_api_key(label="rls-delete-tenant-b", scope="admin")
+
+    admin_engine = create_async_engine(postgres_url)
+    async with admin_engine.begin() as connection:
+        await connection.execute(
+            text(
+                "INSERT INTO quotas (api_key_id, customer_id, metric, limit_per_window) "
+                "VALUES (:id, 'rls_del_cust', 'api_calls', 1000)"
+            ),
+            {"id": tenant_a_id},
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO quotas (api_key_id, customer_id, metric, limit_per_window) "
+                "VALUES (:id, 'rls_del_cust', 'api_calls', 2000)"
+            ),
+            {"id": tenant_b_id},
+        )
+    await admin_engine.dispose()
+
+    role_engine = create_async_engine(nobypassrls_role)
+    try:
+        async with role_engine.begin() as connection:
+            await connection.execute(
+                text("SELECT set_config('app.current_api_key_id', :id, true)"),
+                {"id": str(tenant_a_id)},
+            )
+            # No api_key_id predicate at all -- mirrors delete_quota's DELETE
+            # statement with its primary WHERE clause stripped out.
+            result = await connection.execute(
+                text("DELETE FROM quotas WHERE customer_id = 'rls_del_cust' RETURNING api_key_id")
+            )
+            deleted_ids = {row[0] for row in result.fetchall()}
+        assert deleted_ids == {tenant_a_id}, (
+            "an unfiltered DELETE under tenant A's session setting must only "
+            f"remove tenant A's own row; deleted api_key_ids={deleted_ids}"
+        )
+
+        admin_check_engine = create_async_engine(postgres_url)
+        async with admin_check_engine.connect() as connection:
+            survivor = (
+                await connection.execute(
+                    text(
+                        "SELECT limit_per_window FROM quotas "
+                        "WHERE api_key_id = :id AND customer_id = 'rls_del_cust'"
+                    ),
+                    {"id": tenant_b_id},
+                )
+            ).mappings().one()
+        await admin_check_engine.dispose()
+        assert survivor["limit_per_window"] == 2000, "tenant B's row must survive the cross-tenant DELETE"
+    finally:
+        await role_engine.dispose()
+
+
 async def test_rls_denies_all_rows_when_tenant_setting_is_unset(
     postgres_url, nobypassrls_role, make_api_key
 ):
