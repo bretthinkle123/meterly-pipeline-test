@@ -1,0 +1,33 @@
+# Gitleaks configuration for Meterly.
+#
+# Extends the FULL upstream default ruleset (nothing is disabled) and adds one
+# narrowly-scoped allowlist for a verified false positive: the `generic-api-key`
+# rule misfires on `idempotency_key="<short test value>"` kwargs in the usage-
+# export test fixtures (and on one security-report line that quotes such a
+# fixture). These are test idempotency keys, not secrets — presented API keys in
+# tests always come from the make_api_key() fixture, never hardcoded literals.
+# Verified false positives on 2026-07-09 (see
+# docs/decisions/feature/usage-export/security-report.md, Finding 6).
+#
+# Scope: the allowlist requires BOTH conditions (condition = "AND") — a finding
+# is suppressed only if it is in one of the two named fixture paths AND its line
+# is an `idempotency_key=` kwarg assignment. A real secret elsewhere, or any
+# other finding in these two files, is still reported. This is not a blanket
+# file/path disable.
+
+title = "meterly-gitleaks"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "idempotency_key test-fixture kwargs misflagged by generic-api-key (verified FPs, 2026-07-09)"
+condition = "AND"
+paths = [
+  '''tests/integration/test_usage_export_endpoint\.py''',
+  '''docs/decisions/feature/usage-export/security-report\.md''',
+]
+regexTarget = "line"
+regexes = [
+  '''idempotency_key\s*=\s*["'][^"']*["']''',
+]

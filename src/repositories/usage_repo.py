@@ -126,7 +126,12 @@ async def count_usage_rollups(
         window_from=window_from,
         window_to=window_to,
     )
-    result = await session.execute(text(f"SELECT count(*) FROM usage_rollup WHERE {where_clause}"), params)
+    # Safe: `where_clause` is composed only of fixed literal fragments chosen by
+    # _export_filter_clause_and_params (which filters are *present*); every filter
+    # *value* travels in `params` as a bound parameter, never interpolated into the
+    # SQL string. No caller-controlled input reaches this text(). Not a SQLi sink.
+    count_sql = text(f"SELECT count(*) FROM usage_rollup WHERE {where_clause}")  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+    result = await session.execute(count_sql, params)
     return result.scalar_one()
 
 
@@ -171,18 +176,20 @@ async def stream_usage_rollups(
         window_to=window_to,
     )
     params["limit"] = limit
-    result = await session.stream(
-        text(
-            f"""
-            SELECT customer_id, metric, window_start, total_quantity
-            FROM usage_rollup
-            WHERE {where_clause}
-            ORDER BY window_start, customer_id, metric ASC
-            LIMIT :limit
-            """
-        ).execution_options(yield_per=_STREAM_FETCH_BATCH),
-        params,
-    )
+    # Safe: same invariant as count_usage_rollups — `where_clause` is fixed
+    # literal fragments only, the ORDER BY is a server-side constant, and every
+    # filter value (plus :limit) is a bound parameter in `params`. No caller
+    # input is interpolated into the SQL string. Not a SQLi sink.
+    stream_sql = text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+        f"""
+        SELECT customer_id, metric, window_start, total_quantity
+        FROM usage_rollup
+        WHERE {where_clause}
+        ORDER BY window_start, customer_id, metric ASC
+        LIMIT :limit
+        """
+    ).execution_options(yield_per=_STREAM_FETCH_BATCH)
+    result = await session.stream(stream_sql, params)
     async for row in result.mappings():
         yield UsageRollupExportRecord(
             customer_id=row["customer_id"],

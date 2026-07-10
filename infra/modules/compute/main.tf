@@ -111,9 +111,9 @@ resource "aws_ecs_task_definition" "this" {
 
   container_definitions = jsonencode([
     {
-      name      = "app"
-      image     = var.container_image
-      essential = true
+      name         = "app"
+      image        = var.container_image
+      essential    = true
       portMappings = [{ containerPort = 8000, protocol = "tcp" }]
       environment = [
         { name = "METERLY_ENVIRONMENT", value = var.environment },
@@ -140,12 +140,24 @@ resource "aws_ecs_task_definition" "this" {
 
 data "aws_region" "current" {}
 
+# internal = false is INTENTIONAL: this is the public entry point for the
+# Meterly API (an internet-facing ALB is the designed architecture — CLAUDE.md
+# "ALB"). "Load balancer is exposed publicly" (AWS-0053) is therefore an accepted,
+# by-design property, not a misconfiguration:
+#trivy:ignore:AVD-AWS-0053 Public API — the ALB is internet-facing by design; access is fronted by HTTPS-only ingress, API-key auth, and per-key rate limiting.
 resource "aws_lb" "this" {
   name               = "${var.name_prefix}-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [var.alb_security_group_id]
   subnets            = var.public_subnet_ids
+
+  # Drop malformed HTTP headers at the edge rather than forwarding them to the
+  # app (defends against header-smuggling; clears AWS-0052).
+  drop_invalid_header_fields = true
+
+  # Guard the production entry point against accidental teardown (CKV_AWS_150).
+  enable_deletion_protection = true
 }
 
 # Blue/green target groups — deploy.yml shifts the listener rule's weighted
@@ -219,8 +231,8 @@ resource "aws_ecs_service" "this" {
 
   load_balancer {
     target_group_arn = aws_lb_target_group.blue.arn
-    container_name    = "app"
-    container_port    = 8000
+    container_name   = "app"
+    container_port   = 8000
   }
 
   deployment_minimum_healthy_percent = 100
@@ -252,7 +264,7 @@ resource "aws_appautoscaling_policy" "ecs_request_count" {
     target_value = 300
     predefined_metric_specification {
       predefined_metric_type = "ALBRequestCountPerTarget"
-      resource_label          = "${aws_lb.this.arn_suffix}/${aws_lb_target_group.blue.arn_suffix}"
+      resource_label         = "${aws_lb.this.arn_suffix}/${aws_lb_target_group.blue.arn_suffix}"
     }
   }
 }
