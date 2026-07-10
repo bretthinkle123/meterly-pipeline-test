@@ -36,6 +36,15 @@ class QuotaState:
     current_total: Decimal
 
 
+@dataclass(frozen=True)
+class QuotaListItem:
+    """One row of `GET /v1/quotas`'s listing — the minimal, public quota shape."""
+
+    customer_id: str
+    metric: str
+    limit_per_window: int
+
+
 async def upsert_quota(
     session: AsyncSession,
     *,
@@ -147,3 +156,60 @@ async def read_tenant_quota_state_locked(
     rollup_row = rollup_result.mappings().first()
     current_total = rollup_row["total_quantity"] if rollup_row is not None else Decimal(0)
     return QuotaState(limit_per_window=lock_row["limit_per_window"], current_total=Decimal(current_total))
+
+
+async def list_quotas(session: AsyncSession, *, api_key_id: int) -> list[QuotaListItem]:
+    """Return every quota row for the caller's own tenant, ordered by
+    `(customer_id, metric)` for a deterministic, repeatable listing.
+
+    The `ORDER BY` matches the leading columns of the table's primary key
+    `(api_key_id, customer_id, metric)`, so the sort is index-friendly on top
+    of the already-scoped index scan (plan §"deterministic ORDER BY").
+    """
+    result = await session.execute(
+        text(
+            """
+            SELECT customer_id, metric, limit_per_window
+            FROM quotas
+            WHERE api_key_id = :api_key_id
+            ORDER BY customer_id, metric
+            """
+        ),
+        {"api_key_id": api_key_id},
+    )
+    return [
+        QuotaListItem(
+            customer_id=row["customer_id"],
+            metric=row["metric"],
+            limit_per_window=row["limit_per_window"],
+        )
+        for row in result.mappings().all()
+    ]
+
+
+async def delete_quota(
+    session: AsyncSession, *, api_key_id: int, customer_id: str, metric: str
+) -> bool:
+    """Remove the cap for `(api_key_id, customer_id, metric)`, returning
+    whether a row actually matched and was removed.
+
+    `RETURNING customer_id` on a single-statement, parameterized `DELETE` is
+    what lets the service distinguish "removed" from "nothing there to
+    remove" without a separate existence check (avoiding a TOCTOU gap
+    between check and delete). The explicit `api_key_id` filter is the
+    primary tenant-confinement control; `quotas_tenant_isolation` FORCE RLS
+    (migration `0003`) is the backstop — a cross-tenant call matches zero
+    rows here, which the service maps to 404 (plan §"Tenant confinement is
+    structural, not a special case").
+    """
+    result = await session.execute(
+        text(
+            """
+            DELETE FROM quotas
+            WHERE api_key_id = :api_key_id AND customer_id = :customer_id AND metric = :metric
+            RETURNING customer_id
+            """
+        ),
+        {"api_key_id": api_key_id, "customer_id": customer_id, "metric": metric},
+    )
+    return result.mappings().first() is not None

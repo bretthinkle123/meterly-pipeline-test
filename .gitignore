@@ -16,6 +16,7 @@ htmlcov/
 *.sqlite3
 *.tfstate
 *.tfvars
+.terraform/
 node_modules/
 dist/
 build/
