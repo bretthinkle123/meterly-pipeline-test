@@ -240,6 +240,9 @@ path stays cheap (AC20 measures its added latency under load).
 ## Auth
 
 Split-token API keys (`mtr_live_<key_id>_<secret>`), Argon2id-hashed at rest.
+Clients present the key in the standard bearer scheme —
+`Authorization: Bearer mtr_live_<key_id>_<secret>` — which is also the auth
+context a DAST job (ZAP/Schemathesis) reads to authenticate its scan (DAST-3).
 An in-process, TTL-bounded verification cache (keyed on the public `key_id`,
 guarded by a constant-time digest comparison) avoids paying the Argon2id cost
 on every request while the durable store stays Argon2id-only. See

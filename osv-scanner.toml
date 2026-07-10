@@ -1,0 +1,21 @@
+# osv-scanner configuration — the committed, tool-native, human-reviewed waiver
+# file the pipeline-ci `deps` job honors (the local .pipeline/waivers.json never
+# reaches CI by design). osv-scanner exits non-zero on ANY finding, so the B6
+# deploy-gate floor ("CVSS >= 7.0 fails") is expressed here: a finding strictly
+# BELOW 7.0 is recorded as an IgnoredVuln with a written justification and a
+# review date. Anything at or above 7.0 must be fixed (dependency bump), never
+# ignored here.
+
+[[IgnoredVulns]]
+id = "GHSA-6w46-j5rx-g56g"          # alias: PYSEC-2026-1845 — pytest 8.3.4
+ignoreUntil = 2026-10-09
+reason = """
+Below the B6 CVSS >= 7.0 gating floor (this advisory is CVSS 6.8, Medium) AND
+not in the deployed attack surface: pytest is a [tool.poetry.group.dev]
+test-only dependency — the production container installs main deps only, so
+pytest never ships. Fixed in pytest 9.0.3, but that is a major-version bump
+(8 -> 9) with pytest-asyncio/-cov compatibility risk across the whole suite;
+tracked for a deliberate dev-dependency upgrade rather than a rushed bump under
+this CI-green remediation. Revisit by the ignoreUntil date, or immediately if a
+higher-severity pytest advisory lands.
+"""

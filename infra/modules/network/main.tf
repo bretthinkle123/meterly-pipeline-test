@@ -140,11 +140,16 @@ resource "aws_security_group" "alb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # The ALB only forwards to / health-checks the Fargate tasks (app port 8000),
+  # all inside this VPC. Scope egress to the VPC CIDR on 8000 rather than
+  # 0.0.0.0/0 (clears AWS-0104). A CIDR (not the task SG id) is used so no
+  # circular alb<->task security-group reference forms.
   egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    description = "Forward / health-check app tasks in this VPC only"
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr_block]
   }
 
   tags = { Name = "${var.name_prefix}-alb-sg" }
@@ -163,10 +168,28 @@ resource "aws_security_group" "task" {
     security_groups = [aws_security_group.alb.id]
   }
 
+  # In-VPC egress: the tasks reach RDS (5432) and Redis (6379), both in this VPC.
+  # Scoped to the VPC CIDR (clears AWS-0104); a CIDR avoids a circular
+  # task<->rds / task<->redis security-group reference.
   egress {
+    description = "Reach in-VPC data stores (RDS 5432 / Redis 6379)"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
+    cidr_blocks = [var.vpc_cidr_block]
+  }
+
+  # Outbound HTTPS to the internet via NAT — a genuine need: ECR image pull,
+  # Secrets Manager, CloudWatch Logs, X-Ray, Sentry, and the OTLP exporter, none
+  # fronted by a VPC endpoint in this build's scope. Narrowed from all-ports/all-
+  # protocols to 443/tcp only (no arbitrary-port exfil path). The residual
+  # 0.0.0.0/0 on 443 is an ACCEPTED RISK, not a fixable misconfig here:
+  #trivy:ignore:AVD-AWS-0104 The tasks require outbound HTTPS to public AWS/SaaS endpoints (ECR, Secrets Manager, CloudWatch, X-Ray, Sentry) via NAT; no VPC endpoints are provisioned in scope. Egress is restricted to 443/tcp.
+  egress {
+    description = "Outbound HTTPS to external services via NAT (ECR, Secrets Manager, CloudWatch, X-Ray, Sentry, OTLP)"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
@@ -186,11 +209,16 @@ resource "aws_security_group" "rds" {
     security_groups = [aws_security_group.task.id]
   }
 
+  # RDS PostgreSQL never initiates outbound connections (SGs are stateful, so
+  # replies to the app's inbound queries need no egress rule). Egress is confined
+  # to the VPC CIDR on the Postgres port instead of 0.0.0.0/0 — clears the
+  # unrestricted-egress finding (AWS-0104) at the source rather than waiving it.
   egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    description = "In-VPC only (never 0.0.0.0/0); Postgres wire protocol"
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr_block]
   }
 
   tags = { Name = "${var.name_prefix}-rds-sg" }
@@ -209,11 +237,15 @@ resource "aws_security_group" "redis" {
     security_groups = [aws_security_group.task.id]
   }
 
+  # ElastiCache Redis never initiates outbound connections either. Egress is
+  # confined to the VPC CIDR on the Redis port instead of 0.0.0.0/0 — clears
+  # AWS-0104 at the source.
   egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    description = "In-VPC only (never 0.0.0.0/0); Redis protocol"
+    from_port   = 6379
+    to_port     = 6379
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr_block]
   }
 
   tags = { Name = "${var.name_prefix}-redis-sg" }

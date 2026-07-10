@@ -2,8 +2,31 @@
 # Object-Lock archive, the canary + SLO burn-rate alarms deploy.yml consumes,
 # the alert SNS topic, the cost-guardrail AWS Budget, and the synthetic canary.
 
+# Customer-managed KMS key for observability data at rest (the audit-archive and
+# canary-artifact S3 buckets). A CMK — not the AWS-managed S3 key — puts rotation
+# and access policy under this account's control, which the compliance-grade,
+# object-locked audit archive warrants (clears AWS-0132). Rotation enabled.
+resource "aws_kms_key" "observability" {
+  description             = "${var.name_prefix} observability data-at-rest (audit archive, canary artifacts)"
+  enable_key_rotation     = true
+  deletion_window_in_days = 30
+}
+
+resource "aws_kms_alias" "observability" {
+  name          = "alias/${var.name_prefix}-observability"
+  target_key_id = aws_kms_key.observability.key_id
+}
+
 resource "aws_sns_topic" "alerts" {
   name = "${var.name_prefix}-alerts"
+  # Encrypt the alert topic at rest (AWS-0095) with the AWS-managed SNS key. A
+  # customer-managed key (AWS-0136) is deliberately NOT used here: the topic
+  # carries only operational alarm notifications (no customer data), and a CMK
+  # would need a bespoke key policy granting cloudwatch.amazonaws.com publish
+  # rights — get that wrong and prod alerting fails silently. Encryption-at-rest
+  # is satisfied; CMK-granularity is an accepted, out-of-scope hardening:
+  #trivy:ignore:AVD-AWS-0136 Operational alert topic (no customer data); encrypted with the AWS-managed SNS key. A CMK would require a bespoke CloudWatch-publish key policy — deferred as a hardening, not a fix under this CI-green remediation.
+  kms_master_key_id = "alias/aws/sns"
 }
 
 resource "aws_sns_topic_subscription" "alerts_email" {
@@ -28,8 +51,8 @@ resource "aws_cloudwatch_log_resource_policy" "audit_deny_delete" {
   policy_document = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Sid    = "DenyDeleteExceptOpsRole"
-      Effect = "Deny"
+      Sid       = "DenyDeleteExceptOpsRole"
+      Effect    = "Deny"
       Principal = "*"
       Action = [
         "logs:DeleteLogGroup",
@@ -62,8 +85,10 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "audit_archive" {
   bucket = aws_s3_bucket.audit_archive.id
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "aws:kms"
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.observability.arn
     }
+    bucket_key_enabled = true
   }
 }
 
@@ -171,7 +196,7 @@ resource "aws_budgets_budget" "monthly" {
   notification {
     comparison_operator        = "GREATER_THAN"
     threshold                  = 80
-    threshold_type              = "PERCENTAGE"
+    threshold_type             = "PERCENTAGE"
     notification_type          = "ACTUAL"
     subscriber_email_addresses = [var.alert_email]
   }
@@ -179,7 +204,7 @@ resource "aws_budgets_budget" "monthly" {
   notification {
     comparison_operator        = "GREATER_THAN"
     threshold                  = 100
-    threshold_type              = "PERCENTAGE"
+    threshold_type             = "PERCENTAGE"
     notification_type          = "FORECASTED"
     subscriber_email_addresses = [var.alert_email]
   }
@@ -193,6 +218,26 @@ resource "aws_budgets_budget" "monthly" {
 
 resource "aws_s3_bucket" "canary_artifacts" {
   bucket = "${var.name_prefix}-canary-artifacts-${data.aws_caller_identity.current.account_id}"
+}
+
+resource "aws_s3_bucket_versioning" "canary_artifacts" {
+  bucket = aws_s3_bucket.canary_artifacts.id
+  versioning_configuration {
+    status = "Enabled" # CKV_AWS_21 — keep prior canary-script revisions recoverable
+  }
+}
+
+# Encrypt the canary-artifact bucket with the same observability CMK (it had no
+# SSE configuration at all — clears AWS-0132 and gives it encryption at rest).
+resource "aws_s3_bucket_server_side_encryption_configuration" "canary_artifacts" {
+  bucket = aws_s3_bucket.canary_artifacts.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.observability.arn
+    }
+    bucket_key_enabled = true
+  }
 }
 
 resource "aws_s3_bucket_public_access_block" "canary_artifacts" {

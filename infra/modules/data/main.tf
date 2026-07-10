@@ -33,8 +33,8 @@ resource "aws_db_instance" "this" {
   storage_encrypted     = true
   kms_key_id            = aws_kms_key.data.arn
 
-  db_name  = "meterly"
-  username = "meterly_admin"
+  db_name                       = "meterly"
+  username                      = "meterly_admin"
   manage_master_user_password   = true
   master_user_secret_kms_key_id = aws_kms_key.data.arn
 
@@ -43,9 +43,19 @@ resource "aws_db_instance" "this" {
   db_subnet_group_name   = aws_db_subnet_group.this.name
   vpc_security_group_ids = [var.rds_security_group_id]
 
-  backup_retention_period = 7
-  deletion_protection     = true
-  skip_final_snapshot     = false
+  # Hardening additions (Checkov): IAM DB auth, automatic minor-version patching,
+  # CloudWatch log export, Performance Insights (CMK-encrypted), and tag copy to
+  # snapshots. All are single-attribute, non-architectural improvements.
+  iam_database_authentication_enabled = true
+  auto_minor_version_upgrade          = true
+  enabled_cloudwatch_logs_exports     = ["postgresql", "upgrade"]
+  performance_insights_enabled        = true
+  performance_insights_kms_key_id     = aws_kms_key.data.arn
+  copy_tags_to_snapshot               = true
+
+  backup_retention_period   = 7
+  deletion_protection       = true
+  skip_final_snapshot       = false
   final_snapshot_identifier = "${var.name_prefix}-postgres-final"
 
   tags = { Name = "${var.name_prefix}-postgres" }
@@ -95,6 +105,9 @@ resource "aws_secretsmanager_secret" "app_database_url" {
 
 resource "aws_secretsmanager_secret_version" "app_database_url" {
   secret_id = aws_secretsmanager_secret.app_database_url.id
+  # checkov:skip=CKV_SECRET_6:False positive — the "high-entropy" span is a Terraform
+  # interpolation of the generated random_password (never a committed literal); the
+  # value is materialized only at apply time into the KMS-encrypted secret.
   secret_string = "postgresql+asyncpg://meterly_app:${random_password.app_db_password.result}@${aws_db_instance.this.address}:5432/meterly"
 
   depends_on = [null_resource.app_role_bootstrap]
@@ -107,13 +120,13 @@ resource "aws_elasticache_subnet_group" "this" {
 
 resource "aws_elasticache_replication_group" "this" {
   replication_group_id = "${var.name_prefix}-redis"
-  description           = "Meterly rate-limit token-bucket store"
+  description          = "Meterly rate-limit token-bucket store"
 
   engine         = "redis"
   engine_version = "7.1"
   node_type      = var.redis_node_type
 
-  num_cache_clusters = 2
+  num_cache_clusters         = 2
   automatic_failover_enabled = true
 
   subnet_group_name  = aws_elasticache_subnet_group.this.name
