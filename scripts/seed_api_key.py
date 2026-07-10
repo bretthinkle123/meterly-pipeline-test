@@ -17,10 +17,20 @@ Usage:
 import argparse
 import asyncio
 import sys
+from pathlib import Path
 
-from src.auth.api_key import generate_split_token, hash_new_secret
-from src.db.session import dispose_engine, get_engine
-from src.repositories.api_keys_repo import create_api_key
+# This is a standalone entrypoint, not an installed console script. When run as
+# `python scripts/seed_api_key.py`, Python puts the script's own directory
+# (`scripts/`) on sys.path[0], NOT the repo root, so `import src` fails whenever
+# the package isn't pip-installed (e.g. CI's `poetry install --no-root`). Put the
+# repo root on the path first so the import resolves regardless of install mode.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from src.auth.api_key import generate_split_token, hash_new_secret  # noqa: E402
+from src.db.session import dispose_engine, get_engine  # noqa: E402
+from src.repositories.api_keys_repo import create_api_key  # noqa: E402
 
 
 async def _seed(label: str, rate_limit_per_sec: int, *, admin: bool) -> None:

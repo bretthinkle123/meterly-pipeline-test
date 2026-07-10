@@ -42,6 +42,9 @@ build-backend = "poetry.core.masonry.api"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "perf: wall-clock latency/throughput assertion — load-sensitive, deselected on the shared CI runner via `-m 'not perf'` and run only on a quiet, dedicated host (see tests/integration/test_usage_export_perf.py).",
+]
 
 [tool.coverage.run]
 branch = true

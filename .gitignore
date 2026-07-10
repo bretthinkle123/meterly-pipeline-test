@@ -9,6 +9,7 @@ venv/
 .hypothesis/
 .ruff_cache/
 .coverage
+.coverage.*
 coverage.json
 htmlcov/
 *.db
@@ -16,6 +17,8 @@ htmlcov/
 *.sqlite3
 *.tfstate
 *.tfvars
+.terraform/
+.terraform.lock.hcl
 node_modules/
 dist/
 build/
