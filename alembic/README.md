@@ -11,6 +11,7 @@ Database schema migrations using Alembic (SQLAlchemy's migration tool): version-
 | `versions/0001_create_api_keys_and_events.py` | Migration: create `api_keys` and `events` tables with constraints, indexes, and RLS policies (initial schema creation). Down path: drop both tables in FK-safe order. |
 | `versions/0002_create_usage_rollup_backfill.py` | Migration: create `usage_rollup` table and backfill aggregates from existing `events` rows (expand + backfill pattern). Down path: drop the table and restore original `events` data if needed. |
 | `versions/0003_create_quotas_and_api_key_scope.py` | Migration: create the `quotas` table (`PK (api_key_id, customer_id, metric)`, `CHECK (limit_per_window >= 1)`, RLS policy `quotas_tenant_isolation` + `FORCE ROW LEVEL SECURITY`) and add `api_keys.scope` (`'ingest'` default, `'admin'` elevated). Expand-only (add-table + add-column); down path drops `quotas` and the `scope` column. |
+| `versions/0004_force_rls_usage_rollup.py` | Migration: security remediation — `ALTER TABLE usage_rollup FORCE ROW LEVEL SECURITY`, making the pre-existing `usage_rollup_tenant_isolation` policy (from `0002`) effective for the table owner (`meterly_app`), which otherwise bypasses non-FORCE RLS regardless of `NOBYPASSRLS`. Mirrors `0003`'s FORCE on `quotas`. Pure grant-semantics toggle (no DDL on rows/columns); down path is `NO FORCE ROW LEVEL SECURITY`. |
 | `env.py` | Alembic runtime configuration: detects whether to run in "offline" (SQL script generation) or "online" (live DB) mode; configures the SQLAlchemy engine and metadata. |
 | `script.py.mako` | Template for auto-generated migration files (not typically modified). |
 
@@ -31,7 +32,18 @@ Database schema migrations using Alembic (SQLAlchemy's migration tool): version-
 - 0003 creates the `quotas` table (per-tenant, per-customer, per-metric usage caps, RLS
   `FORCE`d so the app-role table owner can't bypass it) and expands `api_keys` with a
   `scope` column (`'ingest'` default, `'admin'` elevated), both in one expand-only revision.
+- 0004 is a security-remediation grant-semantics toggle: `FORCE`s the `usage_rollup_tenant_isolation`
+  RLS policy (already created in `0002`) so it also binds the table owner — no table/column/row
+  change. It was added for the `usage-daily` feature as a sanctioned deviation from that
+  feature's plan (which declared no new migration); see `.pipeline/pr-description.md` for
+  the full disclosure.
 - Future migrations follow the same pattern: version number increments, only forward/backward are specified.
+
+**Known gap, deliberately out of scope for `0004`:** the `events` table (`0001`) carries
+the same `ENABLE ROW LEVEL SECURITY`-without-`FORCE` gap `usage_rollup` had — `meterly_app`
+owns `events` too, so its `events_tenant_isolation` policy is equally inert for the app
+role. `0004` fixed only `usage_rollup` (the table the `usage-daily` feature reads); the
+`events` gap is tracked in the finding ledger, not remediated here.
 
 ## Notes
 
@@ -47,6 +59,9 @@ Database schema migrations using Alembic (SQLAlchemy's migration tool): version-
   create-migration's down) and drops the `ck_api_keys_scope` constraint + `scope` column
   (pre-existing `api_keys` rows and their other columns survive; `scope` resets to its
   `'ingest'` default on a subsequent `up`, per the add-column expand/contract contract).
+- 0004 down: `NO FORCE ROW LEVEL SECURITY` on `usage_rollup` — restores the pre-remediation
+  owner-bypass binding; no rows or schema are touched, so `up -> down -> up` is a no-op on
+  data and restores the policy's binding state identically.
 
 **Testing:**
 - `tests/integration/test_migrations.py` runs the migration roundtrip (up → down → up) against a live test database.

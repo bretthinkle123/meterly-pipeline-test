@@ -9,16 +9,17 @@ Data access layer: SQL queries with parameterization, row-level scoping (by auth
 | File / Module | Responsibility |
 |---|---|
 | `events_repo.py` | `insert_event_if_new(session, *, api_key_id, customer_id, metric, quantity, idempotency_key, window_start)` — `INSERT ... ON CONFLICT (api_key_id, idempotency_key) DO NOTHING`, returning `None` on a duplicate. `find_event_by_idempotency_key(session, *, api_key_id, idempotency_key)` — reads back the original row on a duplicate replay. `increment_usage_rollup(session, *, api_key_id, customer_id, metric, window_start, quantity)` — the rollup upsert, called only after `insert_event_if_new` returns a row. |
-| `usage_repo.py` | `find_usage_rollup(api_key_id, customer_id, metric, window_start)` — SELECT from `usage_rollup` scoped by `api_key_id`. Returns None if missing (caller handles zero conversion). `count_usage_rollups(api_key_id, customer_id=None, metric=None, window_from=None, window_to=None)` — the export's pre-flight row-cap count over the same optional filters. `stream_usage_rollups(api_key_id, ..., limit)` — the export's server-side-cursor stream (`session.stream(...)`, yields `UsageRollupExportRecord`), ordered by a **fixed literal** `ORDER BY window_start, customer_id, metric` (never client-derived) with `LIMIT`. The count and stream queries share a `_export_filter_clause_and_params` helper so their WHERE clauses can never drift apart. |
+| `usage_repo.py` | `find_usage_rollup(api_key_id, customer_id, metric, window_start)` — SELECT from `usage_rollup` scoped by `api_key_id`. Returns None if missing (caller handles zero conversion). `count_usage_rollups(api_key_id, customer_id=None, metric=None, window_from=None, window_to=None)` — the export's pre-flight row-cap count over the same optional filters. `stream_usage_rollups(api_key_id, ..., limit)` — the export's server-side-cursor stream (`session.stream(...)`, yields `UsageRollupExportRecord`), ordered by a **fixed literal** `ORDER BY window_start, customer_id, metric` (never client-derived) with `LIMIT`. The count and stream queries share a `_export_filter_clause_and_params` helper so their WHERE clauses can never drift apart. `aggregate_daily_event_counts(session, *, api_key_id, day_start, day_end)` — sums `event_count` per `metric` over the half-open `[day_start, day_end)` window, scoped by `api_key_id` first (same IDOR/BOLA invariant as the other reads), `GROUP BY metric ORDER BY metric ASC`; returns `list[DailyMetricCount]`. Backs `GET /v1/usage/daily` — one grouped aggregate over `usage_rollup`'s pre-computed hour-buckets rather than a `COUNT(*)` scan of raw `events`. |
 | `api_keys_repo.py` | `find_active_key_by_key_id(key_id)` — SELECT from `api_keys` by public `key_id` (used by auth cache miss); returns the full row including `scope`. `create_api_key(..., scope="ingest")` — the only key-provisioning path. |
 | `quotas_repo.py` | `upsert_quota(...)` — `INSERT ... ON CONFLICT (api_key_id, customer_id, metric) DO UPDATE ... RETURNING (xmax = 0) AS inserted`, reporting create-vs-replace in one round-trip. `read_tenant_quota_state_locked(...)` — the atomic check-then-decide: locks the quota row (`FOR UPDATE`), then reads the current-window rollup total as a **separate, fresh** statement (see *Notes* below for why). Returns `None` when no quota exists (unlimited, no lock taken). `list_quotas(session, *, api_key_id)` — `api_key_id`-scoped `SELECT customer_id, metric, limit_per_window ... ORDER BY customer_id, metric` (index-friendly on the table's PK prefix), returns `list[QuotaListItem]`. `delete_quota(session, *, api_key_id, customer_id, metric)` — parameterized `DELETE ... WHERE api_key_id = :api_key_id AND customer_id = :customer_id AND metric = :metric RETURNING customer_id`, returns `bool` (whether a row matched and was removed). |
 
 ## Relationships
 
 **Public surface:**
-- Imported by `src/services.{events_service, usage_service, usage_export_service, quota_service}` to execute queries.
+- Imported by `src/services.{events_service, usage_service, usage_export_service, usage_daily_service, quota_service}` to execute queries.
 - `api_keys_repo` is also imported by `src/auth.api_key` (credential lookup on cache miss).
 - `quotas_repo` is imported by `quota_service` (the upsert, list, and delete) and `events_service` (the read-and-decide).
+- `usage_repo.aggregate_daily_event_counts` is imported by `usage_daily_service` only.
 
 **Dependencies:**
 - All functions are async; they receive an `AsyncSession` from the service layer (obtained via `src/db.session_context`).
@@ -36,6 +37,7 @@ Data access layer: SQL queries with parameterization, row-level scoping (by auth
 - `find_usage_rollup` returns only `{total_quantity, event_count}` — not internal bookkeeping (`updated_at`, `api_key_id`).
 - `list_quotas` returns `QuotaListItem{customer_id, metric, limit_per_window}` — the same minimal shape `QuotaResponse` echoes, never `api_key_id`/timestamps.
 - `stream_usage_rollups` yields `UsageRollupExportRecord{customer_id, metric, window_start, total_quantity}` — exactly the four exported columns, never `event_count`, `updated_at`, or `api_key_id`.
+- `aggregate_daily_event_counts` returns `list[DailyMetricCount]{metric, event_count}` — the per-metric sum only; `customer_id` and every hour-bucket are collapsed by the `GROUP BY`, never echoed individually.
 - `api_keys_repo.get_by_key_id` returns the full row (needed by auth for `secret_hash`, `rate_limit_per_sec`, `revoked_at`).
 
 **Constraint enforcement:**

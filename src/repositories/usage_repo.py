@@ -1,5 +1,6 @@
 """Repository for reading `usage_rollup` — the O(1) aggregate lookup behind
-`GET /v1/usage`, and the count/stream queries behind `GET /v1/usage/export`.
+`GET /v1/usage`, the count/stream queries behind `GET /v1/usage/export`, and
+the per-metric daily aggregate behind `GET /v1/usage/daily`.
 
 Reads the pre-aggregated counter rather than summing `events` live, which is
 what keeps the GET p95 budget bounded as ingest volume grows (see the plan's
@@ -197,3 +198,51 @@ async def stream_usage_rollups(
             window_start=row["window_start"],
             total_quantity=row["total_quantity"],
         )
+
+
+@dataclass(frozen=True)
+class DailyMetricCount:
+    """One metric's summed `event_count` for a UTC day, aggregated across
+    every hour-bucket and `customer_id` under the tenant (the daily
+    endpoint's "per metric" grouping deliberately collapses `customer_id`)."""
+
+    metric: str
+    event_count: int
+
+
+async def aggregate_daily_event_counts(
+    session: AsyncSession,
+    *,
+    api_key_id: int,
+    day_start: datetime,
+    day_end: datetime,
+) -> list[DailyMetricCount]:
+    """Sum `usage_rollup.event_count` per `metric` over `[day_start, day_end)`,
+    scoped by the authenticated `api_key_id` first (IDOR/BOLA mitigation,
+    same invariant as `find_usage_rollup`/`count_usage_rollups`).
+
+    Backs `GET /v1/usage/daily`: one grouped aggregate over the day's
+    hour-buckets rather than a `COUNT(*)` scan of raw `events`, keeping the
+    per-request cost bounded as ingest volume grows (see the plan's "Reading
+    the data" writeup). `day_start`/`day_end` are always bound parameters —
+    the caller-supplied `date` string never reaches this function, only the
+    datetimes `parse_daily_date` already validated.
+    """
+    result = await session.execute(
+        text(
+            """
+            SELECT metric, SUM(event_count) AS event_count
+            FROM usage_rollup
+            WHERE api_key_id = :api_key_id
+              AND window_start >= :day_start
+              AND window_start <  :day_end
+            GROUP BY metric
+            ORDER BY metric ASC
+            """
+        ),
+        {"api_key_id": api_key_id, "day_start": day_start, "day_end": day_end},
+    )
+    return [
+        DailyMetricCount(metric=row["metric"], event_count=row["event_count"])
+        for row in result.mappings()
+    ]

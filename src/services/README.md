@@ -12,19 +12,21 @@ Business logic layer: event ingestion (with idempotency and counter atomicity), 
 | `usage_service.py` | `get_usage(principal, query)` — reads the aggregated counter for the `(customer_id, metric, window)` bucket in `query` (a `UsageQueryParams`); returns zeros if the bucket is empty (never 404). |
 | `usage_export_service.py` | `prepare_export(principal, params)` — the pre-flight row-cap check: a `COUNT(*)` in its own transaction, raising a plain 422 `HTTPException` over `MAX_EXPORT_ROWS` (100,000) *before* any response byte; any other (non-cap) error propagates uncaught to the error-envelope boundary (fail-closed 500, no stream ever started). `stream_export_csv(principal, params)` — the `StreamingResponse` body generator: opens its own tenant-scoped transaction (Starlette pulls it only after the route returns), yields the header row first always (so an empty result is a 200 header-only CSV, never 404), then one CSV-encoded row per streamed rollup at constant memory (a reused `io.StringIO`, drained and reset per row), and logs one `usage.export` audit event in a `finally` block (fires even on a client disconnect or a mid-stream error). |
 | `quota_service.py` | `upsert_tenant_quota(principal, payload)` — create-or-replaces the caller's cap for `(customer_id, metric)` in one transaction; maps the repository's insert-vs-replace signal to 201/200 and logs the `quota.upsert` audit event. `list_tenant_quotas(principal)` — opens a `scoped_transaction`, calls `quotas_repo.list_quotas`, and maps the rows to `list[QuotaResponse]`; an empty tenant gets an empty list (no dedicated business log — a plain read of the caller's own config, mirroring `usage_service.get_usage`). `delete_tenant_quota(principal, params)` — opens a `scoped_transaction`, calls `quotas_repo.delete_quota`; raises `HTTPException(404)` if no row matched, otherwise logs the `quota.delete` audit event. |
+| `usage_daily_service.py` | `get_daily_usage(principal, query)` — validates `query.date` via `parse_daily_date`, opens a `scoped_transaction`, calls `usage_repo.aggregate_daily_event_counts`, logs the `usage.daily.read` event (`userId`, `action="read"`, `resource="usage_rollup"`, `date`, `metricCount` — never `customer_id`), and returns a `DailyUsageResponse` (empty `metrics` list, never 404, for a day with no events). Adds no error-swallowing try/except of its own — an unexpected repository failure propagates uncaught to the central `handle_unexpected_error` fail-closed boundary, the same posture as `usage_export_service`. |
 | `time_windows.py` | `floor_to_hour_utc(timestamp: datetime)` — floors a timezone-aware timestamp to the hour (UTC); used by `events_service` and `usage_service`. |
 
 ## Relationships
 
 **Public surface:**
-- Imported by `src/api.routes.{events, usage, usage_export, quotas}` to execute the core business operations.
+- Imported by `src/api.routes.{events, usage, usage_export, usage_daily, quotas}` to execute the core business operations.
 
 **Dependencies:**
 - `events_service` imports `src/repositories.{events_repo, quotas_repo}` to insert the event, check the quota, and upsert the counter.
 - `usage_service` imports `src/repositories.usage_repo` to read the rollup.
 - `usage_export_service` imports `src/repositories.usage_repo` (`count_usage_rollups`, `stream_usage_rollups`) and `src/api/csv_export.py` (the column contract + formula-escape facade) — it owns the `csv.writer`/`io.StringIO` streaming mechanics, `csv_export.py` owns only the encoding/escaping contract.
+- `usage_daily_service` imports `src/api/schemas/usage_daily.py` (`parse_daily_date`, `DailyMetricCount`, `DailyUsageQueryParams`, `DailyUsageResponse`) and `src/repositories.usage_repo.aggregate_daily_event_counts` to sum the day's hour-buckets per metric.
 - `quota_service` imports `src/repositories.quotas_repo` to upsert, list, and delete quota rows.
-- All services receive an authenticated `AuthenticatedPrincipal` from the route handler (set by `require_api_key` guard); `principal.scope` gates `PUT`/`GET`/`DELETE /v1/quotas` at the route layer (via the shared `_require_admin_and_throttled` dependency) before `quota_service` ever runs (the export has no scope gate — any authenticated key may export its own tenant's data).
+- All services receive an authenticated `AuthenticatedPrincipal` from the route handler (set by `require_api_key` guard); `principal.scope` gates `PUT`/`GET`/`DELETE /v1/quotas` at the route layer (via the shared `_require_admin_and_throttled` dependency) before `quota_service` ever runs (the export and daily-usage reads have no scope gate — any authenticated key may read/export its own tenant's data).
 - `time_windows` is imported by `events_service` and `usage_service` to floor timestamps.
 
 **Transaction boundary:**

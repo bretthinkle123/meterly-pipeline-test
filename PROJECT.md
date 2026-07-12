@@ -1,6 +1,7 @@
-Feature: quota administration — list and delete.
-- GET /v1/quotas (admin-scoped API key) lists quotas.
-- DELETE /v1/quotas removes the quota for {customer_id, metric}.
-- Existing API-key auth applies. No behavior change to POST /v1/events when no quota exists.
-- The pipeline-ci workflow must be green on the PR (it is now a required merge check).
+Feature: daily usage summary — GET /v1/usage/daily?date=YYYY-MM-DD
+- Returns per-metric event counts for the authenticated customer for the given UTC day.
+- Existing API-key auth applies (customer-scoped, not admin).
+- 400 on a malformed or missing date; an empty metrics list (not 404) when the day has no events.
+- No behavior change to POST /v1/events or any existing endpoint.
+- The pipeline-ci workflow must be green on the PR (required merge check).
 Design source: none.

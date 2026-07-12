@@ -497,10 +497,39 @@ async def test_concurrent_delete_of_the_same_quota_yields_exactly_one_winner(
 
 
 async def test_no_new_alembic_migration_added(postgres_url):
-    """AC14: this feature operates on the existing `quotas` table — no new
-    file under alembic/versions/ beyond the existing revisions 0001-0003."""
+    """AC14: the quota list/delete feature operates on the existing `quotas`
+    table and adds no migration of its own.
+
+    Revision `0004` was added later as a SANCTIONED security remediation for a
+    separate feature (usage-daily): it applies `FORCE ROW LEVEL SECURITY` to
+    `usage_rollup` so the tenant-isolation RLS backstop binds the table owner
+    (see `alembic/versions/0004_force_rls_usage_rollup.py` and
+    `.pipeline/debug-notes.md`). It does NOT touch the `quotas` table, so the
+    AC14 intent — this feature smuggled in no `quotas` schema change — still
+    holds. This test enforces exactly that: the only revision beyond the
+    quota-era 0001-0003 is that usage_rollup remediation."""
     from pathlib import Path
 
     versions_dir = Path(__file__).resolve().parents[2] / "alembic" / "versions"
     revision_files = sorted(p.name for p in versions_dir.glob("*.py") if not p.name.startswith("__"))
-    assert len(revision_files) == 3, f"expected exactly 3 migration files, found: {revision_files}"
+    assert revision_files == [
+        "0001_create_api_keys_and_events.py",
+        "0002_create_usage_rollup_backfill.py",
+        "0003_create_quotas_and_api_key_scope.py",
+        "0004_force_rls_usage_rollup.py",
+    ], f"unexpected migration file set: {revision_files}"
+
+    # Guard AC14's real intent: the only revision beyond the quota-era set is a
+    # usage_rollup remediation whose DDL touches only usage_rollup — never the
+    # quotas table. Inspect the actual DDL targets, not prose mentions.
+    import re
+
+    remediation_sql = (versions_dir / "0004_force_rls_usage_rollup.py").read_text()
+    assert "FORCE ROW LEVEL SECURITY" in remediation_sql, (
+        "0004 must be the usage_rollup FORCE-RLS remediation"
+    )
+    ddl_targets = set(re.findall(r"ALTER TABLE (\w+)", remediation_sql))
+    assert ddl_targets == {"usage_rollup"}, (
+        f"0004 must alter only usage_rollup, never quotas (AC14); saw {ddl_targets}"
+    )
+    assert "CREATE TABLE" not in remediation_sql, "0004 must not create any table"
