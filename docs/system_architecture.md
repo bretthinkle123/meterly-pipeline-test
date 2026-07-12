@@ -3,11 +3,11 @@
 ## Overview
 
 Meterly ingests metered usage events, serves aggregated per-customer/metric
-counters (single-bucket read or a streamed CSV export), and enforces
-admin-set per-customer, per-metric usage caps ("quotas"), which an admin key
-can also list and remove. Six authenticated HTTP endpoints, one PostgreSQL
-database, one Redis rate-limit store, running as a Docker container on ECS
-Fargate behind an ALB.
+counters (single-bucket read, a per-day per-metric summary, or a streamed CSV
+export), and enforces admin-set per-customer, per-metric usage caps
+("quotas"), which an admin key can also list and remove. Seven authenticated
+HTTP endpoints, one PostgreSQL database, one Redis rate-limit store, running
+as a Docker container on ECS Fargate behind an ALB.
 
 ```
 Client --HTTPS+API key--> ALB --> FastAPI (ECS Fargate, >=2 tasks)
@@ -25,6 +25,7 @@ flowchart LR
     FastAPI -->|"require_api_key: cache hit or Argon2id verify"| AuthDB[(RDS PostgreSQL: api_keys)]
     FastAPI -->|"POST /v1/events: insert + quota check + rollup upsert"| EventsDB[(RDS PostgreSQL: events / usage_rollup / quotas)]
     FastAPI -->|"GET /v1/usage: read rollup"| EventsDB
+    FastAPI -->|"GET /v1/usage/daily: aggregate rollup by day+metric"| EventsDB
     FastAPI -->|"GET /v1/usage/export: pre-flight COUNT + streamed SELECT"| EventsDB
     FastAPI -->|"PUT /v1/quotas: upsert cap"| EventsDB
     FastAPI -->|"GET /v1/quotas: list caller's caps"| EventsDB
@@ -69,6 +70,40 @@ Same auth/throttle/error stack; the service floors `window` to the UTC hour
 and reads a single `usage_rollup` row scoped by the caller's `api_key_id`
 (`src/services/usage_service.py`, `src/repositories/usage_repo.py`). A missing
 bucket returns zeros with 200, never 404.
+
+## Request flow — `GET /v1/usage/daily`
+
+Same auth/throttle/error stack as `GET /v1/usage`, kept in its own sibling
+module (`src/api/routes/usage_daily.py`) so `GET /v1/usage`'s code path stays
+byte-for-byte unchanged (`src/api/schemas/usage_daily.py`,
+`src/services/usage_daily_service.py`, `src/repositories/usage_repo.py`):
+
+1. `DailyUsageQueryParams` binds the single `date` query field as a loose
+   `str | None` (`extra="forbid"` still rejects any undeclared param, e.g. a
+   smuggled `customer_id`, with the house 422 contract). `parse_daily_date`
+   then validates the *value* imperatively and raises `HTTPException(400)`
+   directly for a missing value, a non-`YYYY-MM-DD` shape, an invalid
+   calendar date, or a date outside `[today_utc-90d, today_utc+1d]` — the
+   endpoint's one deliberate 400-not-422 deviation from `usage.py`'s/
+   `usage_export.py`'s Pydantic-422 convention.
+2. `usage_daily_service.get_daily_usage` opens a `scoped_transaction` (the
+   same `SET LOCAL app.current_api_key_id` RLS-context mechanism every other
+   read/write uses) and calls `usage_repo.aggregate_daily_event_counts`,
+   which sums `usage_rollup.event_count` per `metric` over the half-open
+   `[day_start, day_end)` UTC window, scoped by `api_key_id` first
+   (`GROUP BY metric ORDER BY metric ASC` — one grouped aggregate over the
+   day's pre-computed hour-buckets, not a `COUNT(*)` scan of raw `events`).
+3. Logs one `usage.daily.read` event (`userId`, `action="read"`,
+   `resource="usage_rollup"`, `date`, `metricCount` — never `customer_id`),
+   then returns `DailyUsageResponse{date, metrics: [DailyMetricCount{metric,
+   event_count}, ...]}`. A day with no events returns 200 with `metrics: []`,
+   never 404 (the same "absence is a valid answer" contract `GET /v1/usage`
+   documents). An unexpected repository failure propagates uncaught to the
+   central `handle_unexpected_error` boundary — a generic fail-closed 500.
+
+**Customer-scoped, not admin-gated** — like `GET /v1/usage`, any authenticated
+key may read its own daily summary; the endpoint accepts no `customer_id`/
+`api_key_id` input, which removes the IDOR parameter entirely.
 
 ## Request flow — `GET /v1/usage/export`
 
@@ -200,7 +235,14 @@ Both reuse the same `_require_admin_and_throttled` dependency chain as `PUT`
   `events_tenant_isolation` is the application-scoping backstop.
 - `usage_rollup` — derived hourly aggregate (migration 0002, expand +
   backfill from `events`). Composite PK `(api_key_id, customer_id, metric,
-  window_start)`; RLS policy `usage_rollup_tenant_isolation`.
+  window_start)`; RLS policy `usage_rollup_tenant_isolation`, **`FORCE`d as of
+  migration 0004** (security remediation — the app connects as the table
+  owner `meterly_app`, which otherwise bypasses non-`FORCE` RLS regardless of
+  `NOBYPASSRLS`; mirrors `0003`'s `FORCE` on `quotas`). Read by `GET
+  /v1/usage`, `GET /v1/usage/daily`, and `GET /v1/usage/export`; written by
+  `POST /v1/events`'s rollup increment. **Known gap:** `events` (migration
+  0001) still carries the same non-`FORCE` RLS gap, deliberately out of scope
+  for `0004` — see `.pipeline/pr-description.md`.
 - `quotas` — per-tenant, per-customer, per-metric usage caps (migration
   0003). PK `(api_key_id, customer_id, metric)`; `CHECK (limit_per_window >=
   1)`; RLS policy `quotas_tenant_isolation`. The `POST /v1/events` quota
