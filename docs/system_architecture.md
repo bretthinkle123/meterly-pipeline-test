@@ -232,7 +232,12 @@ Both reuse the same `_require_admin_and_throttled` dependency chain as `PUT`
   wants quotas provisions one admin-scoped key and uses it for all three.
 - `events` — append-only ingest log (migration 0001). `UNIQUE (api_key_id,
   idempotency_key)` is the idempotency guarantee; RLS policy
-  `events_tenant_isolation` is the application-scoping backstop.
+  `events_tenant_isolation` is the application-scoping backstop, **`FORCE`d as
+  of migration 0005** (security remediation — the app connects as the table
+  owner `meterly_app`, which otherwise bypasses non-`FORCE` RLS regardless of
+  `NOBYPASSRLS`; mirrors `0004`'s `FORCE` on `usage_rollup`. Closes the gap
+  `0004` deliberately left open for `events`; see
+  `.pipeline/pr-description.md`).
 - `usage_rollup` — derived hourly aggregate (migration 0002, expand +
   backfill from `events`). Composite PK `(api_key_id, customer_id, metric,
   window_start)`; RLS policy `usage_rollup_tenant_isolation`, **`FORCE`d as of
@@ -240,9 +245,7 @@ Both reuse the same `_require_admin_and_throttled` dependency chain as `PUT`
   owner `meterly_app`, which otherwise bypasses non-`FORCE` RLS regardless of
   `NOBYPASSRLS`; mirrors `0003`'s `FORCE` on `quotas`). Read by `GET
   /v1/usage`, `GET /v1/usage/daily`, and `GET /v1/usage/export`; written by
-  `POST /v1/events`'s rollup increment. **Known gap:** `events` (migration
-  0001) still carries the same non-`FORCE` RLS gap, deliberately out of scope
-  for `0004` — see `.pipeline/pr-description.md`.
+  `POST /v1/events`'s rollup increment.
 - `quotas` — per-tenant, per-customer, per-metric usage caps (migration
   0003). PK `(api_key_id, customer_id, metric)`; `CHECK (limit_per_window >=
   1)`; RLS policy `quotas_tenant_isolation`. The `POST /v1/events` quota

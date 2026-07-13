@@ -506,8 +506,10 @@ async def test_no_new_alembic_migration_added(postgres_url):
     (see `alembic/versions/0004_force_rls_usage_rollup.py` and
     `.pipeline/debug-notes.md`). It does NOT touch the `quotas` table, so the
     AC14 intent — this feature smuggled in no `quotas` schema change — still
-    holds. This test enforces exactly that: the only revision beyond the
-    quota-era 0001-0003 is that usage_rollup remediation."""
+    holds. This test enforces exactly that: the only revisions beyond the
+    quota-era 0001-0003 are that usage_rollup remediation and its `events`-table
+    sibling (`0005_force_rls_events.py`, a separate feature: "enforce row-level
+    security on the events table"), neither of which touches `quotas`."""
     from pathlib import Path
 
     versions_dir = Path(__file__).resolve().parents[2] / "alembic" / "versions"
@@ -517,6 +519,7 @@ async def test_no_new_alembic_migration_added(postgres_url):
         "0002_create_usage_rollup_backfill.py",
         "0003_create_quotas_and_api_key_scope.py",
         "0004_force_rls_usage_rollup.py",
+        "0005_force_rls_events.py",
     ], f"unexpected migration file set: {revision_files}"
 
     # Guard AC14's real intent: the only revision beyond the quota-era set is a
@@ -533,3 +536,15 @@ async def test_no_new_alembic_migration_added(postgres_url):
         f"0004 must alter only usage_rollup, never quotas (AC14); saw {ddl_targets}"
     )
     assert "CREATE TABLE" not in remediation_sql, "0004 must not create any table"
+
+    # AC1: 0005 is the events-table sibling FORCE-RLS remediation -- inspect
+    # its actual DDL targets, not prose mentions.
+    events_remediation_sql = (versions_dir / "0005_force_rls_events.py").read_text()
+    assert "FORCE ROW LEVEL SECURITY" in events_remediation_sql, (
+        "0005 must be the events FORCE-RLS remediation"
+    )
+    events_ddl_targets = set(re.findall(r"ALTER TABLE (\w+)", events_remediation_sql))
+    assert events_ddl_targets == {"events"}, (
+        f"0005 must alter only events, never quotas or other tables; saw {events_ddl_targets}"
+    )
+    assert "CREATE TABLE" not in events_remediation_sql, "0005 must not create any table"
